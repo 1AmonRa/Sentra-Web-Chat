@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Sentra · Report Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1' y1='0' y2='1'%3E%3Cstop offset='0' stop-color='%237c6df0'/%3E%3Cstop offset='1' stop-color='%235b8def'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3Ctext x='50' y='66' text-anchor='middle' font-family='Inter,sans-serif' font-size='58' font-weight='700' fill='white'%3ES%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+
+  <!-- ============== LOGIN / REGISTER VIEW ============== -->
+  <div class="auth-view" id="authView">
+    <div class="auth-bg" aria-hidden="true"></div>
+    <div class="auth-card">
+      <div class="auth-head">
+        <div class="brand-mark big" aria-hidden="true"><span>S</span></div>
+        <h1 id="authTitle">Sentra Report Agent'e Hoş Geldiniz</h1>
+        <p id="authSub">Şirketler ve sektörler hakkında derinlemesine analiz için giriş yapın.</p>
+      </div>
+
+      <form class="auth-form" id="authForm" autocomplete="off">
+        <div class="field hidden" id="nameField">
+          <label>Ad Soyad</label>
+          <input type="text" name="name" placeholder="Adınız" />
+        </div>
+        <div class="field">
+          <label>E-posta</label>
+          <input type="email" name="email" placeholder="ornek@firma.com" required />
+        </div>
+        <div class="field">
+          <label>Şifre</label>
+          <input type="password" name="password" placeholder="En az 6 karakter" required minlength="6" />
+        </div>
+        <div class="auth-error" id="authError" hidden></div>
+        <button type="submit" class="btn primary block" id="authSubmit">Giriş Yap</button>
+      </form>
+
+      <div class="auth-foot">
+        <span id="authSwitchText">Hesabınız yok mu?</span>
+        <button type="button" id="authSwitchBtn" class="link-btn">Kayıt olun</button>
+      </div>
+    </div>
+    <div class="auth-side">
+      <div class="auth-side-inner">
+        <h2>Kurumsal analiz, yeniden tanımlandı.</h2>
+        <p>Sentra, şirketler, sektörler ve rakipler hakkında dakikalar içinde profesyonel raporlar üretir. Her kullanıcı kendi hafıza dosyaları ve özel yönergeleriyle kişiselleştirilmiş yanıtlar alır.</p>
+        <ul class="auth-features">
+          <li><span class="dot"></span><b>Yapılandırılmış raporlar</b> — yönetici özeti, SWOT, strateji</li>
+          <li><span class="dot"></span><b>Kişisel hafıza</b> — şirket/proje bilgileriniz her zaman yanıtta</li>
+          <li><span class="dot"></span><b>Özel yönergeler</b> — CFO, stratejist, sektör uzmanı profilleri</li>
+          <li><span class="dot"></span><b>Konuşma geçmişi</b> — tüm raporlarınız güvenle saklanır</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== MAIN APP ============== -->
+  <div class="app hidden" id="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><span>S</span></div>
+          <div class="brand-text">
+            <strong>Sentra</strong>
+            <span>Report Agent</span>
+          </div>
+        </div>
+        <button class="icon-btn ghost" id="closeSidebarBtn" aria-label="Kenar çubuğunu kapat" title="Kenar çubuğunu kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15 6l-6 6 6 6"/></svg>
+        </button>
+      </div>
+
+      <button class="new-chat-btn" id="newChatBtn" type="button">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+        Yeni Rapor
+      </button>
+
+      <nav class="nav" id="conversations" aria-label="Konuşma geçmişi"></nav>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-head">
+          <span>Kütüphane</span>
+        </div>
+        <button class="row-btn" id="openLibraryBtn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 4h6v16H4zM14 4h6v16h-6zM6 8h2M16 8h2"/></svg>
+          <span>Hafıza &amp; Yönergeler</span>
+          <span class="counter" id="libraryCount">0</span>
+        </button>
+      </div>
+
+      <div class="sidebar-foot">
+        <button class="row-btn" id="settingsBtn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+          <span>Ayarlar</span>
+        </button>
+        <div class="user-chip">
+          <div class="avatar" id="userAvatar">K</div>
+          <div class="user-info">
+            <div class="name" id="userName">Kullanıcı</div>
+            <div class="plan" id="userPlan">Sentra Pro</div>
+          </div>
+          <button class="icon-btn ghost small" id="logoutBtn" title="Çıkış" aria-label="Çıkış">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="backdrop" id="backdrop" hidden></div>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn ghost" id="menuBtn" aria-label="Menüyü aç" title="Menü">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>
+          </button>
+          <div class="model-pill">
+            <span class="status-dot" id="statusDot"></span>
+            <span class="model-name">Sentra</span>
+            <span class="model-divider"></span>
+            <span class="model-tag" id="modelTag">Report Agent</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="ctx-pill" id="ctxPill" title="Yanıt için kullanılan bağlam">
+            <svg viewBox="0 0 24 24" width="13" height="13"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M20 7L9 18l-5-5"/></svg>
+            <span id="ctxSummary">bağlam hazırlanıyor</span>
+          </div>
+          <label class="switch-row" id="deepToggle" title="Rapor modu: sistem prompt'una derinlemesine analiz yönergesi ekler">
+            <span class="switch-label">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2l2.4 6.6L21 9l-5 4.5L17.5 21 12 17.3 6.5 21 8 13.5 3 9l6.6-.4z"/></svg>
+              Derin Analiz
+            </span>
+            <span class="switch">
+              <input type="checkbox" id="deepCheckbox" />
+              <span class="track"></span>
+            </span>
+          </label>
+          <button class="icon-btn ghost" id="pdfBtn" title="PDF olarak yazdır/indir" aria-label="PDF indir">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6M9 9h2"/></svg>
+          </button>
+          <button class="icon-btn ghost" id="exportBtn" title="Markdown olarak indir" aria-label="Markdown indir">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="content" id="content"></section>
+
+      <button class="jump-bottom" id="jumpBottom" type="button" hidden aria-label="Aşağı git">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M19 12l-7 7-7-7"/></svg>
+        <span class="badge" id="jumpBadge" hidden>0</span>
+      </button>
+
+      <div class="composer-wrap">
+        <form class="composer" id="composer" autocomplete="off">
+          <div class="composer-inner">
+            <div class="composer-toolbar">
+              <button type="button" class="toolbar-btn" id="attachBtn" title="Dosya ekle (JSON, CSV, TXT, MD)" aria-label="Dosya ekle">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M21.4 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                <span>Dosya</span>
+              </button>
+              <button type="button" class="toolbar-btn" id="imageBtn" title="Görsel ekle (Vision)" aria-label="Görsel ekle">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM21 15l-5-5L5 21"/></svg>
+                <span>Görsel</span>
+              </button>
+              <input type="file" id="fileInput" accept=".json,.csv,.txt,.md,.xml,.yaml,.yml,application/json,text/csv,text/plain" hidden />
+              <input type="file" id="imageInput" accept="image/jpeg,image/png,image/gif,image/webp" hidden multiple />
+              <div class="attachment-chips" id="attachmentChips"></div>
+            </div>
+            <textarea
+              id="input"
+              rows="1"
+              placeholder="Bir şirket, sektör veya konu hakkında detaylı analiz iste… (görsel sürükleyebilir veya 📎 ekleyebilirsin)"
+              aria-label="Mesaj girişi"
+            ></textarea>
+            <div class="composer-actions">
+              <span class="hint">Enter ↵ gönder · Shift+Enter yeni satır</span>
+              <button id="sendBtn" class="send-btn" type="submit" aria-label="Gönder">
+                <span class="send-icon">
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3.4 20.6 21 12 3.4 3.4 3 10l13 2-13 2z"/></svg>
+                </span>
+                <span class="stop-icon" hidden>
+                  <svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+                </span>
+              </button>
+            </div>
+            <div class="drag-hint" id="dragHint">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+              <span>Dosyayı buraya bırak</span>
+            </div>
+          </div>
+        </form>
+        <div class="disclaimer">Sentra bilgi amaçlı içerik üretir. Yatırım kararları için profesyonel danışmanlık alın.</div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============== LIBRARY MODAL ============== -->
+  <div class="modal" id="libraryModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="libraryTitle">
+      <header class="modal-head">
+        <div>
+          <h2 id="libraryTitle">Kütüphane</h2>
+          <p class="modal-sub">Hafıza dosyaları ve özel yönergeler ile AI'ı kişiselleştirin</p>
+        </div>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="library-tabs">
+        <button class="lib-tab active" data-tab="memory" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M4 4h12a2 2 0 012 2v14l-4-3-4 3-4-3-4 3V6a2 2 0 012-2z"/></svg>
+          Hafıza
+          <span class="counter" id="memCount">0</span>
+        </button>
+        <button class="lib-tab" data-tab="prompts" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/></svg>
+          Yönergeler
+          <span class="counter" id="prmCount">0</span>
+        </button>
+        <button class="lib-tab" data-tab="templates" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M3 7l9-4 9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+          Şablonlar
+        </button>
+        <div class="lib-tab-spacer"></div>
+        <button class="btn primary" id="libNewBtn" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+          <span id="libNewLabel">Yeni Hafıza</span>
+        </button>
+      </div>
+      <div class="library-body" id="libraryBody">
+        <!-- List injected by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== MEMORY/PROMPT EDITOR ============== -->
+  <div class="modal" id="editorModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true">
+      <header class="modal-head">
+        <h2 id="editorTitle">Düzenle</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="field">
+          <label id="editorNameLabel">Başlık</label>
+          <input type="text" id="editorName" placeholder="" />
+        </div>
+        <div class="field">
+          <label id="editorContentLabel">İçerik</label>
+          <textarea id="editorContent" rows="14" placeholder=""></textarea>
+          <p class="field-hint" id="editorHint">Markdown desteklenir.</p>
+        </div>
+        <div class="field" id="editorActiveField">
+          <label class="check-row">
+            <input type="checkbox" id="editorActive" />
+            <span>Bu öğe aktif — tüm yanıtlara otomatik eklenir</span>
+          </label>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <button class="btn danger" id="editorDeleteBtn" type="button">Sil</button>
+        <div style="flex:1"></div>
+        <button class="btn ghost" data-close type="button">İptal</button>
+        <button class="btn primary" id="editorSaveBtn" type="button">Kaydet</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============== SETTINGS MODAL ============== -->
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="modal-head">
+        <h2 id="settingsTitle">Ayarlar</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="field">
+          <label>Model sıcaklığı (temperature)</label>
+          <div class="range-row">
+            <input type="range" id="tempRange" min="0" max="1" step="0.05" value="0.4" />
+            <span class="range-val" id="tempVal">0.40</span>
+          </div>
+          <p class="field-hint">Düşük değerler daha kararlı ve rapor odaklı, yüksek değerler daha yaratıcı yanıt verir.</p>
+        </div>
+        <div class="field">
+          <label>Hesap</label>
+          <p class="field-hint" id="settingsAccount">—</p>
+        </div>
+        <div class="field">
+          <label>Veri</label>
+          <div class="row-gap">
+            <button class="btn danger" id="clearAllBtn" type="button">Tüm sohbetleri sil</button>
+          </div>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <button class="btn ghost" data-close type="button">Kapat</button>
+        <button class="btn primary" id="saveSettingsBtn" type="button">Kaydet</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js" defer></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
+  <script src="/templates.js" defer></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>
