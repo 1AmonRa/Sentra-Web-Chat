@@ -94,6 +94,11 @@
       </div>
 
       <div class="sidebar-foot">
+        <button class="row-btn admin-only" id="adminBtn" type="button" hidden>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.3l-4.8 2.6.9-5.4L4.2 7.7l5.4-.8L12 2z"/></svg>
+          <span>Yönetim Paneli</span>
+          <span class="counter" id="adminPendingCount" hidden>0</span>
+        </button>
         <button class="row-btn" id="settingsBtn" type="button">
           <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
           <span>Ayarlar</span>
@@ -274,6 +279,116 @@
         <button class="btn ghost" data-close type="button">İptal</button>
         <button class="btn primary" id="editorSaveBtn" type="button">Kaydet</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- ============== ADMIN MODAL ============== -->
+  <div class="modal" id="adminModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+      <header class="modal-head">
+        <h2 id="adminTitle">Yönetim Paneli</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="admin-stats" id="adminStats"></div>
+        <div class="admin-toolbar">
+          <input type="search" id="adminSearch" placeholder="E-posta veya ad ile ara…" autocomplete="off" />
+          <div class="admin-filters">
+            <button class="chip" data-admin-filter="all" data-active="true">Tümü</button>
+            <button class="chip" data-admin-filter="pending">Onay Bekleyen</button>
+            <button class="chip" data-admin-filter="approved">Onaylı</button>
+            <button class="chip" data-admin-filter="admin">Yöneticiler</button>
+          </div>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Kullanıcı</th>
+                <th>Rol</th>
+                <th>Durum</th>
+                <th>Kayıt</th>
+                <th>Son giriş</th>
+                <th class="ta-right">İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="adminTableBody"></tbody>
+          </table>
+          <div class="admin-empty" id="adminEmpty" hidden>Kayıt yok.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== ADMIN EDIT MODAL ============== -->
+  <div class="modal" id="adminEditModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="adminEditTitle">
+      <header class="modal-head">
+        <h2 id="adminEditTitle">Kullanıcıyı Düzenle</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <form id="adminEditForm" class="form">
+          <label class="field">
+            <span>Ad Soyad</span>
+            <input type="text" name="name" maxlength="60" required />
+          </label>
+          <label class="field">
+            <span>E-posta</span>
+            <input type="email" name="email" required />
+          </label>
+          <label class="field">
+            <span>Rol</span>
+            <select name="role">
+              <option value="user">Kullanıcı</option>
+              <option value="admin">Yönetici</option>
+            </select>
+          </label>
+          <label class="field-check">
+            <input type="checkbox" name="approved" />
+            <span>Hesap onaylı</span>
+          </label>
+          <div id="adminEditError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Kaydet</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== ADMIN RESET PASSWORD MODAL ============== -->
+  <div class="modal" id="adminResetModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="adminResetTitle">
+      <header class="modal-head">
+        <h2 id="adminResetTitle">Şifre Sıfırla</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <p class="muted" id="adminResetTarget"></p>
+        <form id="adminResetForm" class="form">
+          <label class="field">
+            <span>Yeni şifre (boş bırakırsan otomatik üretilir)</span>
+            <input type="text" name="newPassword" minlength="6" placeholder="En az 6 karakter" />
+          </label>
+          <div id="adminResetError" class="form-error" hidden></div>
+          <div id="adminResetResult" class="form-info" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>Kapat</button>
+            <button type="submit" class="btn primary">Şifreyi Sıfırla</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 

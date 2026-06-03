@@ -51,17 +51,51 @@ async function writeJson(p, data) {
   await fsp.writeFile(p, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function readUsers() { return fileJson(USERS_FILE, []); }
+function readUsers() {
+  const list = fileJson(USERS_FILE, []);
+  // Migration: eski kullanıcılara varsayılanları ata (sessizce, diske yazmadan — lazy migration)
+  for (const u of list) {
+    if (typeof u.role !== 'string') u.role = 'user';
+    if (typeof u.approved !== 'boolean') u.approved = true;
+  }
+  return list;
+}
 async function writeUsers(list) { await writeJson(USERS_FILE, list); }
 
 const uid = (prefix = 'x') => prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 function sanitizeUser(u) {
-  return { id: u.id, email: u.email, name: u.name, createdAt: u.createdAt };
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role || 'user',
+    approved: u.approved !== false,
+    createdAt: u.createdAt,
+    lastLoginAt: u.lastLoginAt || null
+  };
 }
 
 function emailValid(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// .env'deki ADMIN_BOOTSTRAP_EMAILS listesini oku; sunucu başlangıcında otomatik admin yapar
+function applyBootstrapAdmins() {
+  const raw = process.env.ADMIN_BOOTSTRAP_EMAILS || '';
+  const emails = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (emails.length === 0) return;
+  const list = readUsers();
+  let changed = false;
+  for (const u of list) {
+    if (emails.includes(u.email.toLowerCase()) && (u.role !== 'admin' || u.approved !== true)) {
+      u.role = 'admin';
+      u.approved = true;
+      changed = true;
+      console.log(`[bootstrap] admin rolü verildi: ${u.email}`);
+    }
+  }
+  if (changed) writeJson(USERS_FILE, list);
 }
 
 // ============== Middleware ==============
@@ -91,7 +125,21 @@ function setAuthCookie(res, token) {
   });
 }
 
+// Admin kontrolü: giriş yapmış + role='admin' + approved=true
+async function requireAdmin(req, res, next) {
+  const users = readUsers();
+  const user = users.find((u) => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'Kullanıcı bulunamadı' });
+  if (user.role !== 'admin') return res.status(403).json({ error: 'Bu işlem yönetici yetkisi gerektirir' });
+  if (user.approved === false) return res.status(403).json({ error: 'Hesabınız onaylanmamış' });
+  req.adminUser = user;
+  next();
+}
+
 // ============== Auth ==============
+// Yeni kayıtlar admin onayı bekler (env REGISTER_REQUIRES_APPROVAL=true ise; varsayılan true)
+const REGISTER_REQUIRES_APPROVAL = process.env.REGISTER_REQUIRES_APPROVAL !== 'false';
+
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, name } = req.body || {};
   if (!emailValid(email)) return res.status(400).json({ error: 'Geçerli bir e-posta girin.' });
@@ -104,20 +152,35 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
+  const normalizedEmail = email.trim().toLowerCase();
+  // Bootstrap admin listesinde mi? otomatik admin yap
+  const isBootstrapAdmin = (process.env.ADMIN_BOOTSTRAP_EMAILS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).includes(normalizedEmail);
+
   const user = {
     id: uid('u'),
-    email: email.trim().toLowerCase(),
+    email: normalizedEmail,
     name: name.trim().slice(0, 60),
     passwordHash,
-    createdAt: Date.now()
+    role: isBootstrapAdmin ? 'admin' : 'user',
+    approved: isBootstrapAdmin ? true : !REGISTER_REQUIRES_APPROVAL,
+    createdAt: Date.now(),
+    lastLoginAt: null
   };
   users.push(user);
   await writeUsers(users);
   ensureUserDir(user.id);
 
-  const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: `${SESSION_DAYS}d` });
-  setAuthCookie(res, token);
-  res.json({ user: sanitizeUser(user) });
+  if (user.approved) {
+    const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: `${SESSION_DAYS}d` });
+    setAuthCookie(res, token);
+    return res.json({ user: sanitizeUser(user) });
+  }
+  // Onay bekliyor: oturum açma
+  return res.status(202).json({
+    pendingApproval: true,
+    message: 'Kayıt alındı. Yönetici onayından sonra giriş yapabilirsiniz.'
+  });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -130,6 +193,16 @@ app.post('/api/auth/login', async (req, res) => {
 
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: 'E-posta veya şifre hatalı.' });
+
+  if (user.approved === false) {
+    return res.status(403).json({
+      error: 'Hesabınız henüz yönetici tarafından onaylanmamış. Onay verildikten sonra tekrar deneyin.',
+      code: 'NOT_APPROVED'
+    });
+  }
+
+  user.lastLoginAt = Date.now();
+  await writeUsers(users);
 
   const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: `${SESSION_DAYS}d` });
   setAuthCookie(res, token);
@@ -146,6 +219,78 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
   const user = users.find((u) => u.id === req.userId);
   if (!user) return res.status(401).json({ error: 'Kullanıcı bulunamadı' });
   res.json({ user: sanitizeUser(user) });
+});
+
+// ============== Admin ==============
+// Liste: tüm kullanıcılar (admin hariç, sadece diğer kullanıcılar)
+app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
+  const users = readUsers();
+  res.json(users.map(sanitizeUser).sort((a, b) => a.createdAt - b.createdAt));
+});
+
+// Kullanıcı güncelle (ad, e-posta, rol, onay)
+app.patch('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  const target = req.params.id;
+  if (target === req.userId) {
+    return res.status(400).json({ error: 'Kendi hesabınızı bu şekilde değiştiremezsiniz' });
+  }
+  const users = readUsers();
+  const user = users.find((u) => u.id === target);
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+
+  const { name, email, role, approved } = req.body || {};
+  if (typeof name === 'string' && name.trim()) user.name = name.trim().slice(0, 60);
+  if (typeof email === 'string' && emailValid(email)) {
+    const normalized = email.trim().toLowerCase();
+    if (users.some((u) => u.id !== target && u.email.toLowerCase() === normalized)) {
+      return res.status(409).json({ error: 'Bu e-posta başka bir kullanıcıda kayıtlı' });
+    }
+    user.email = normalized;
+  }
+  if (role === 'admin' || role === 'user') user.role = role;
+  if (typeof approved === 'boolean') user.approved = approved;
+  user.updatedAt = Date.now();
+
+  await writeUsers(users);
+  res.json(sanitizeUser(user));
+});
+
+// Şifre sıfırlama (admin tarafından)
+app.post('/api/admin/users/:id/reset-password', requireAuth, requireAdmin, async (req, res) => {
+  const target = req.params.id;
+  const users = readUsers();
+  const user = users.find((u) => u.id === target);
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+
+  const { newPassword } = req.body || {};
+  let pw = typeof newPassword === 'string' ? newPassword : '';
+  if (!pw || pw.length < 6) {
+    // Otomatik rastgele şifre üret
+    pw = crypto.randomBytes(6).toString('base64').replace(/[+/=]/g, '').slice(0, 10);
+  }
+  user.passwordHash = await bcrypt.hash(pw, 10);
+  user.updatedAt = Date.now();
+  await writeUsers(users);
+  res.json({ ok: true, temporaryPassword: pw });
+});
+
+// Kullanıcı sil
+app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  const target = req.params.id;
+  if (target === req.userId) {
+    return res.status(400).json({ error: 'Kendi hesabınızı silemezsiniz' });
+  }
+  const users = readUsers();
+  const user = users.find((u) => u.id === target);
+  if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
+
+  const remaining = users.filter((u) => u.id !== target);
+  await writeUsers(remaining);
+
+  // Kullanıcı verilerini de sil
+  try { await fsp.rm(userDir(target), { recursive: true, force: true }); } catch (_) {}
+
+  res.json({ ok: true });
 });
 
 // ============== Per-user helpers ==============
@@ -750,6 +895,8 @@ const DEEP_SYSTEM_PROMPT = [
 ].join("\n");
 
 app.listen(PORT, () => {
+  applyBootstrapAdmins();
   console.log(`Sentra Web Chat çalışıyor: http://localhost:${PORT}`);
   console.log(`Model: ${SENTRA_MODEL} | API: ${SENTRA_API_BASE}`);
+  if (REGISTER_REQUIRES_APPROVAL) console.log('Yeni kayıtlar admin onayı bekliyor (REGISTER_REQUIRES_APPROVAL=true)');
 });

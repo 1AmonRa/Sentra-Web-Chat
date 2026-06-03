@@ -30,6 +30,21 @@
   const exportBtn = $("exportBtn");
   const settingsBtn = $("settingsBtn");
   const settingsModal = $("settingsModal");
+  const adminBtn = $("adminBtn");
+  const adminModal = $("adminModal");
+  const adminEditModal = $("adminEditModal");
+  const adminResetModal = $("adminResetModal");
+  const adminTableBody = $("adminTableBody");
+  const adminStats = $("adminStats");
+  const adminSearch = $("adminSearch");
+  const adminEmpty = $("adminEmpty");
+  const adminPendingCount = $("adminPendingCount");
+  const adminEditForm = $("adminEditForm");
+  const adminResetForm = $("adminResetForm");
+  const adminResetTarget = $("adminResetTarget");
+  const adminEditError = $("adminEditError");
+  const adminResetError = $("adminResetError");
+  const adminResetResult = $("adminResetResult");
   const tempRange = $("tempRange");
   const tempVal = $("tempVal");
   const saveSettingsBtn = $("saveSettingsBtn");
@@ -175,10 +190,19 @@
       authSwitchBtn.textContent = "Kayıt olun";
     }
     authError.hidden = true;
+    authError.classList.remove("auth-success", "auth-error");
   }
   function showAuthError(msg) {
     authError.textContent = msg;
     authError.hidden = false;
+    authError.classList.remove("auth-success");
+    authError.classList.add("auth-error");
+  }
+  function showAuthInfo(msg) {
+    authError.textContent = msg;
+    authError.hidden = false;
+    authError.classList.remove("auth-error");
+    authError.classList.add("auth-success");
   }
 
   authSwitchBtn.addEventListener("click", () => {
@@ -194,9 +218,26 @@
     authSubmit.disabled = true;
     authSubmit.textContent = state.authMode === "register" ? "Kayıt yapılıyor…" : "Giriş yapılıyor…";
     try {
-      const data = await api("/api/auth/" + (state.authMode === "register" ? "register" : "login"), {
-        method: "POST", body: JSON.stringify(body)
+      const res = await fetch("/api/auth/" + (state.authMode === "register" ? "register" : "login"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin"
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+
+      // Kayıt → onay bekleniyor
+      if (data.pendingApproval) {
+        showAuthInfo(data.message || "Kayıt alındı, yönetici onayı bekleniyor.");
+        state.authMode = "login";
+        updateAuthMode();
+        // İsim alanını temizle
+        const nameInput = authForm.querySelector('[name="name"]');
+        if (nameInput) nameInput.value = "";
+        return;
+      }
+
       state.user = data.user;
       showApp();
       await bootApp();
@@ -236,6 +277,10 @@
       userName.textContent = state.user.name;
       userAvatar.textContent = initials(state.user.name);
       userPlan.textContent = state.user.email;
+      // Admin UI toggle
+      const isAdmin = state.user.role === "admin" && state.user.approved !== false;
+      adminBtn.hidden = !isAdmin;
+      if (isAdmin) refreshAdminPendingCount();
     }
     await Promise.all([loadConversations(), loadMemory(), loadPrompts(), loadSettings()]);
     renderAll();
@@ -1984,11 +2029,258 @@
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (!adminResetModal.hidden) { adminResetModal.hidden = true; return; }
+      if (!adminEditModal.hidden) { adminEditModal.hidden = true; return; }
+      if (!adminModal.hidden) { adminModal.hidden = true; return; }
       if (!settingsModal.hidden) { settingsModal.hidden = true; return; }
       if (!editorModal.hidden) { editorModal.hidden = true; return; }
       if (!libraryModal.hidden) { libraryModal.hidden = true; return; }
       if (sidebarEl.classList.contains("open")) { closeSidebar(); return; }
       if (state.sending) stopGeneration();
+    }
+  });
+
+  // ============== Admin Panel ==============
+  let adminState = { users: [], filter: "all", search: "" };
+
+  async function refreshAdminPendingCount() {
+    if (!state.user || state.user.role !== "admin") return;
+    try {
+      const users = await api("/api/admin/users");
+      const pending = users.filter((u) => !u.approved).length;
+      if (pending > 0) {
+        adminPendingCount.textContent = String(pending);
+        adminPendingCount.hidden = false;
+      } else {
+        adminPendingCount.hidden = true;
+      }
+    } catch (_) { /* sessizce yoksay */ }
+  }
+
+  function renderAdminStats(users) {
+    const total = users.length;
+    const approved = users.filter((u) => u.approved).length;
+    const pending = users.filter((u) => !u.approved).length;
+    const admins = users.filter((u) => u.role === "admin").length;
+    adminStats.innerHTML = `
+      <div class="admin-stat"><div class="label">Toplam</div><div class="value">${total}</div></div>
+      <div class="admin-stat"><div class="label">Onaylı</div><div class="value">${approved}</div></div>
+      <div class="admin-stat"><div class="label">Onay Bekleyen</div><div class="value pending">${pending}</div></div>
+      <div class="admin-stat"><div class="label">Yönetici</div><div class="value admin">${admins}</div></div>
+    `;
+  }
+
+  function renderAdminTable() {
+    const me = state.user?.id;
+    const q = adminState.search.toLowerCase();
+    let list = adminState.users.filter((u) => {
+      if (adminState.filter === "pending" && u.approved) return false;
+      if (adminState.filter === "approved" && !u.approved) return false;
+      if (adminState.filter === "admin" && u.role !== "admin") return false;
+      if (q && !(u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))) return false;
+      return true;
+    });
+
+    if (list.length === 0) {
+      adminTableBody.innerHTML = "";
+      adminEmpty.hidden = false;
+      adminEmpty.textContent = adminState.search || adminState.filter !== "all"
+        ? "Filtreye uygun kullanıcı yok."
+        : "Henüz kayıtlı kullanıcı yok.";
+      return;
+    }
+    adminEmpty.hidden = true;
+
+    adminTableBody.innerHTML = list.map((u) => {
+      const isSelf = u.id === me;
+      const created = new Date(u.createdAt).toLocaleDateString("tr-TR");
+      const lastLogin = u.lastLoginAt
+        ? new Date(u.lastLoginAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })
+        : "—";
+      return `
+        <tr data-uid="${u.id}">
+          <td>
+            <div class="user-cell">
+              <div class="avatar user">${escHtml(initials(u.name))}</div>
+              <div class="info">
+                <div class="name">${escHtml(u.name)}${isSelf ? ' <span class="muted">(siz)</span>' : ""}</div>
+                <div class="email">${escHtml(u.email)}</div>
+              </div>
+            </div>
+          </td>
+          <td><span class="role-badge ${u.role}">${u.role === "admin" ? "Yönetici" : "Kullanıcı"}</span></td>
+          <td>
+            <span class="status-badge ${u.approved ? "approved" : "pending"}">
+              <span class="dot"></span>
+              ${u.approved ? "Onaylı" : "Onay bekliyor"}
+            </span>
+          </td>
+          <td><span class="muted">${created}</span></td>
+          <td><span class="muted">${lastLogin}</span></td>
+          <td class="ta-right">
+            <div class="row-actions">
+              <button class="icon-btn ghost" data-action="approve" data-uid="${u.id}" data-approved="${u.approved}" title="${u.approved ? "Onayı kaldır" : "Onayla"}" ${isSelf ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>
+              </button>
+              <button class="icon-btn ghost" data-action="edit" data-uid="${u.id}" title="Düzenle" ${isSelf ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </button>
+              <button class="icon-btn ghost" data-action="reset" data-uid="${u.id}" data-name="${escHtml(u.name)}" data-email="${escHtml(u.email)}" title="Şifre sıfırla">
+                <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M21 2l-2 2m-7.6 7.6a5 5 0 11-7 7 5 5 0 017-7L17 1l4 4-5.4 5.4"/></svg>
+              </button>
+              <button class="icon-btn ghost danger" data-action="delete" data-uid="${u.id}" data-name="${escHtml(u.name)}" title="Sil" ${isSelf ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  async function loadAdminUsers() {
+    adminState.users = await api("/api/admin/users");
+    renderAdminStats(adminState.users);
+    renderAdminTable();
+  }
+
+  async function openAdmin() {
+    if (!state.user || state.user.role !== "admin") return;
+    await loadAdminUsers();
+    adminModal.hidden = false;
+    closeSidebar();
+  }
+  function closeAdmin() { adminModal.hidden = true; }
+
+  adminBtn.addEventListener("click", openAdmin);
+
+  // Filtre + arama
+  adminSearch.addEventListener("input", (e) => {
+    adminState.search = e.target.value.trim();
+    renderAdminTable();
+  });
+  document.querySelectorAll("[data-admin-filter]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      document.querySelectorAll("[data-admin-filter]").forEach((c) => c.setAttribute("data-active", "false"));
+      chip.setAttribute("data-active", "true");
+      adminState.filter = chip.getAttribute("data-admin-filter");
+      renderAdminTable();
+    });
+  });
+
+  // Tablo aksiyonları (event delegation)
+  adminTableBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const uid = btn.getAttribute("data-uid");
+    const action = btn.getAttribute("data-action");
+    const target = adminState.users.find((u) => u.id === uid);
+    if (!target) return;
+
+    if (action === "approve") {
+      const newState = !target.approved;
+      const action_text = newState ? "onaylamak" : "onayını kaldırmak";
+      if (!confirm(`${target.name} (${target.email}) kullanıcısını ${action_text} istediğinize emin misiniz?`)) return;
+      try {
+        const updated = await api(`/api/admin/users/${uid}`, {
+          method: "PATCH",
+          body: JSON.stringify({ approved: newState })
+        });
+        Object.assign(target, updated);
+        renderAdminStats(adminState.users);
+        renderAdminTable();
+        refreshAdminPendingCount();
+        toast(newState ? "Kullanıcı onaylandı" : "Onay kaldırıldı");
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+
+    if (action === "edit") {
+      openAdminEdit(target);
+      return;
+    }
+
+    if (action === "reset") {
+      openAdminReset(target);
+      return;
+    }
+
+    if (action === "delete") {
+      if (!confirm(`${target.name} (${target.email}) kullanıcısını ve tüm verilerini silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`)) return;
+      try {
+        await api(`/api/admin/users/${uid}`, { method: "DELETE" });
+        adminState.users = adminState.users.filter((u) => u.id !== uid);
+        renderAdminStats(adminState.users);
+        renderAdminTable();
+        refreshAdminPendingCount();
+        toast("Kullanıcı silindi");
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+  });
+
+  // ===== Edit modal =====
+  function openAdminEdit(user) {
+    adminEditForm.elements.name.value = user.name;
+    adminEditForm.elements.email.value = user.email;
+    adminEditForm.elements.role.value = user.role;
+    adminEditForm.elements.approved.checked = !!user.approved;
+    adminEditForm.dataset.uid = user.id;
+    adminEditError.hidden = true;
+    adminEditModal.hidden = false;
+  }
+  adminEditForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const uid = adminEditForm.dataset.uid;
+    const body = {
+      name: adminEditForm.elements.name.value.trim(),
+      email: adminEditForm.elements.email.value.trim(),
+      role: adminEditForm.elements.role.value,
+      approved: adminEditForm.elements.approved.checked
+    };
+    try {
+      const updated = await api(`/api/admin/users/${uid}`, {
+        method: "PATCH",
+        body: JSON.stringify(body)
+      });
+      const idx = adminState.users.findIndex((u) => u.id === uid);
+      if (idx >= 0) adminState.users[idx] = updated;
+      renderAdminStats(adminState.users);
+      renderAdminTable();
+      refreshAdminPendingCount();
+      adminEditModal.hidden = true;
+      toast("Kullanıcı güncellendi");
+    } catch (err) {
+      adminEditError.textContent = err.message;
+      adminEditError.hidden = false;
+    }
+  });
+
+  // ===== Reset password modal =====
+  function openAdminReset(user) {
+    adminResetForm.elements.newPassword.value = "";
+    adminResetForm.dataset.uid = user.id;
+    adminResetTarget.textContent = `${user.name} (${user.email}) için yeni şifre belirleyin. Boş bırakırsanız otomatik üretilecek.`;
+    adminResetError.hidden = true;
+    adminResetResult.hidden = true;
+    adminResetModal.hidden = false;
+  }
+  adminResetForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const uid = adminResetForm.dataset.uid;
+    const newPassword = adminResetForm.elements.newPassword.value;
+    try {
+      const res = await api(`/api/admin/users/${uid}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ newPassword: newPassword || undefined })
+      });
+      adminResetResult.innerHTML = `<strong>Yeni şifre:</strong> ${escHtml(res.temporaryPassword)}<br><span class="muted">Bu şifreyi kullanıcıya güvenli bir kanal ile iletin.</span>`;
+      adminResetResult.hidden = false;
+      adminResetForm.elements.newPassword.value = "";
+      toast("Şifre sıfırlandı");
+    } catch (err) {
+      adminResetError.textContent = err.message;
+      adminResetError.hidden = false;
     }
   });
 
