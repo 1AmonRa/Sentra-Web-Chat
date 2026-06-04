@@ -39,6 +39,11 @@ if (!user) {
     lastLoginAt: null
   };
   users.push(user);
+  // Kullanıcı dizinini de oluştur (memory, prompts, conversations, uploads, settings için)
+  const uDir = path.join(DATA_DIR, user.id);
+  fs.mkdirSync(uDir, { recursive: true });
+  fs.mkdirSync(path.join(uDir, 'memory'), { recursive: true });
+  fs.mkdirSync(path.join(uDir, 'prompts'), { recursive: true });
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
   console.log(`[OK] Yeni admin oluşturuldu: ${email}`);
   console.log(`     Şifre: ${tempPw}`);

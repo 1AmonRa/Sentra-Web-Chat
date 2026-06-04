@@ -48,6 +48,9 @@ async function readJson(p, fallback) {
 }
 
 async function writeJson(p, data) {
+  // Parent dizini otomatik oluştur — writeJson her yerde güvenle çağrılabilsin
+  const parent = path.dirname(p);
+  if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
   await fsp.writeFile(p, JSON.stringify(data, null, 2), 'utf8');
 }
 
