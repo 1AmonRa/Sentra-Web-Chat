@@ -1949,3 +1949,112 @@ body {
   .admin-stats { grid-template-columns: repeat(2, 1fr); }
   .admin-table th, .admin-table td { padding: 8px; font-size: 12px; }
 }
+
+/* ============== Workspaces ============== */
+.ws-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+}
+.ws-toolbar input[type="search"] {
+  flex: 1; min-width: 180px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.ws-toolbar input[type="search"]:focus { outline: none; border-color: var(--accent); }
+
+.ws-list {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 50vh; overflow-y: auto;
+}
+.ws-card {
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.12s;
+  display: flex; align-items: center; gap: 12px;
+}
+.ws-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+.ws-card .ws-icon { width: 36px; height: 36px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-bright); display: grid; place-items: center; flex-shrink: 0; }
+.ws-card .ws-info { flex: 1; min-width: 0; }
+.ws-card .ws-name { font-size: 14px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.ws-card .ws-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-card .ws-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.ws-card .ws-active-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; flex-shrink: 0; }
+
+.ws-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+.ws-empty p { margin: 4px 0; }
+
+/* Editor */
+.ws-sources-section {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.ws-sources-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.ws-sources-head h3 { font-size: 14px; font-weight: 500; color: var(--text); margin: 0; }
+.ws-sources-list { display: flex; flex-direction: column; gap: 6px; }
+.ws-source-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.ws-source-item .ws-source-icon {
+  width: 30px; height: 30px; border-radius: 6px;
+  background: var(--accent-soft); color: var(--accent-bright);
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.ws-source-item .ws-source-name { font-weight: 500; color: var(--text); }
+.ws-source-item .ws-source-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.ws-source-item .ws-source-info { flex: 1; min-width: 0; }
+.ws-source-item .ws-source-actions { display: flex; gap: 4px; }
+.ws-source-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; border: 1px dashed var(--border); border-radius: 8px; }
+
+/* Source wizard */
+.ws-source-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.ws-source-type {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 18px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s;
+  font-family: inherit;
+  color: var(--text);
+}
+.ws-source-type:hover { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
+.ws-source-type .ic { width: 44px; height: 44px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-bright); display: grid; place-items: center; margin-bottom: 4px; }
+.ws-source-type .t { font-size: 13.5px; font-weight: 500; }
+.ws-source-type .d { font-size: 11.5px; color: var(--text-muted); }
+@media (max-width: 540px) { .ws-source-types { grid-template-columns: 1fr; } }
+
+.ws-sql-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+.ws-sql-section summary { cursor: pointer; font-size: 13px; color: var(--text); user-select: none; padding: 4px 0; font-weight: 500; }
+.ws-sql-section[open] summary { margin-bottom: 4px; }
+.ws-sql-conn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.ws-sql-conn .field { gap: 4px; }
+@media (max-width: 540px) { .ws-sql-conn { grid-template-columns: 1fr; } }
+
+/* Context pill workspace */
+.ctx-pill.ws { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+.ctx-pill.ws::before { content: "📁"; }

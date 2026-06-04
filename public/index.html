@@ -92,6 +92,11 @@
           <span>Hafıza &amp; Yönergeler</span>
           <span class="counter" id="libraryCount">0</span>
         </button>
+        <button class="row-btn" id="openWorkspacesBtn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 7h18M3 12h18M3 17h12"/></svg>
+          <span>Çalışma Alanları</span>
+          <span class="counter" id="workspacesCount">0</span>
+        </button>
       </div>
 
       <div class="sidebar-foot">
@@ -243,6 +248,212 @@
       </div>
       <div class="library-body" id="libraryBody">
         <!-- List injected by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== WORKSPACES LIST ============== -->
+  <div class="modal" id="workspacesModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="workspacesTitle">
+      <header class="modal-head">
+        <h2 id="workspacesTitle">Çalışma Alanları</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="ws-toolbar">
+          <input type="search" id="wsSearch" placeholder="Çalışma alanı ara…" autocomplete="off" />
+          <button class="btn primary" id="wsNewBtn" type="button">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+            Yeni Çalışma Alanı
+          </button>
+        </div>
+        <div class="ws-list" id="wsList"></div>
+        <div class="ws-empty" id="wsEmpty" hidden>
+          <p>Henüz çalışma alanı yok.</p>
+          <p class="muted">Şirket analizleri, doküman koleksiyonları, SQL şemaları için çalışma alanları oluşturun.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== WORKSPACE EDITOR ============== -->
+  <div class="modal" id="wsEditorModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="wsEditorTitle">
+      <header class="modal-head">
+        <h2 id="wsEditorTitle">Çalışma Alanı</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <form id="wsEditorForm" class="form">
+          <label class="field">
+            <span>Ad</span>
+            <input type="text" name="name" maxlength="80" required />
+          </label>
+          <label class="field">
+            <span>Açıklama (opsiyonel)</span>
+            <textarea name="description" maxlength="500" rows="2" style="min-height:60px"></textarea>
+          </label>
+          <label class="field-check">
+            <input type="checkbox" name="active" />
+            <span>Bu çalışma alanını aktif yap (sohbete bağlansın)</span>
+          </label>
+          <div id="wsEditorError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn danger" id="wsDeleteBtn" hidden>Sil</button>
+            <span style="flex:1"></span>
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Kaydet</button>
+          </div>
+        </form>
+
+        <div class="ws-sources-section">
+          <div class="ws-sources-head">
+            <h3>Kaynaklar</h3>
+            <button class="btn primary small" id="wsAddSourceBtn" type="button">
+              <svg viewBox="0 0 24 24" width="12" height="12"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+              Kaynak Ekle
+            </button>
+          </div>
+          <div class="ws-sources-list" id="wsSourcesList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== WORKSPACE SOURCE WIZARD ============== -->
+  <div class="modal" id="wsSourceModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="wsSourceTitle">
+      <header class="modal-head">
+        <h2 id="wsSourceTitle">Kaynak Ekle</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <div class="ws-source-types" id="wsSourceTypes">
+          <button class="ws-source-type" data-type="doc" type="button">
+            <div class="ic"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M9 13h6 M9 17h6"/></svg></div>
+            <div class="t">Doküman</div>
+            <div class="d">Markdown / metin dokümanı</div>
+          </button>
+          <button class="ws-source-type" data-type="pdf" type="button">
+            <div class="ic"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M8 14h2 M14 14h2 M8 18h6"/></svg></div>
+            <div class="t">PDF</div>
+            <div class="d">PDF dosyası yükle (otomatik metin çıkarımı)</div>
+          </button>
+          <button class="ws-source-type" data-type="sql" type="button">
+            <div class="ic"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 6c0-1.1.9-2 2-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2z M8 8h8 M8 12h8 M8 16h5"/></svg></div>
+            <div class="t">SQL Şema</div>
+            <div class="d">Veritabanı şeması veya canlı bağlantı</div>
+          </button>
+        </div>
+
+        <!-- Doc form -->
+        <form id="wsDocForm" class="form" hidden>
+          <label class="field">
+            <span>Kaynak adı</span>
+            <input type="text" name="name" maxlength="100" required placeholder="Örn: Şirket Profili" />
+          </label>
+          <label class="field">
+            <span>İçerik (Markdown / düz metin)</span>
+            <textarea name="content" required placeholder="Doküman içeriğini buraya yapıştırın..." style="min-height:180px"></textarea>
+          </label>
+          <div id="wsDocError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Ekle</button>
+          </div>
+        </form>
+
+        <!-- PDF form -->
+        <form id="wsPdfForm" class="form" hidden>
+          <label class="field">
+            <span>Kaynak adı</span>
+            <input type="text" name="name" maxlength="100" required placeholder="Örn: Yıllık Rapor 2024" />
+          </label>
+          <label class="field">
+            <span>PDF dosyası</span>
+            <input type="file" name="file" accept="application/pdf" required />
+          </label>
+          <div class="muted" id="wsPdfHint">Max 30MB. Metin otomatik çıkarılır.</div>
+          <div id="wsPdfError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Yükle ve Ekle</button>
+          </div>
+        </form>
+
+        <!-- SQL form -->
+        <form id="wsSqlForm" class="form" hidden>
+          <label class="field">
+            <span>Kaynak adı</span>
+            <input type="text" name="name" maxlength="100" required placeholder="Örn: Üretim veritabanı" />
+          </label>
+          <details class="ws-sql-section">
+            <summary>📋 Şema (CREATE TABLE ifadeleri)</summary>
+            <label class="field" style="margin-top:10px">
+              <span>Şema metni</span>
+              <textarea name="schema" placeholder="CREATE TABLE customers (id INT PRIMARY KEY, name VARCHAR(100), ...);" style="min-height:140px;font-family:var(--font-mono)"></textarea>
+            </label>
+          </details>
+          <details class="ws-sql-section">
+            <summary>📊 Örnek veri (CSV / JSON)</summary>
+            <label class="field" style="margin-top:10px">
+              <span>Örnek veri (opsiyonel)</span>
+              <textarea name="sampleData" placeholder="id,name,segment&#10;1,Acme A.Ş.,Kurumsal&#10;2,Beta Ltd.,KOBİ" style="min-height:100px;font-family:var(--font-mono)"></textarea>
+            </label>
+          </details>
+          <details class="ws-sql-section">
+            <summary>🔌 Canlı bağlantı (opsiyonel)</summary>
+            <p class="muted" style="margin:8px 0">Bağlantı bilgileri sunucuda AES-256-GCM ile şifrelenir. Şifre gösterilmez.</p>
+            <div class="ws-sql-conn">
+              <label class="field">
+                <span>Veritabanı tipi</span>
+                <select name="dbType">
+                  <option value="">Şema modu (bağlantı yok)</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Host</span>
+                <input type="text" name="host" placeholder="db.example.com" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="number" name="port" placeholder="3306" />
+              </label>
+              <label class="field">
+                <span>Veritabanı</span>
+                <input type="text" name="database" placeholder="production" />
+              </label>
+              <label class="field">
+                <span>Kullanıcı</span>
+                <input type="text" name="user" placeholder="readonly_user" />
+              </label>
+              <label class="field">
+                <span>Şifre</span>
+                <input type="password" name="password" placeholder="••••••••" />
+              </label>
+              <label class="field-check">
+                <input type="checkbox" name="ssl" />
+                <span>SSL kullan</span>
+              </label>
+            </div>
+          </details>
+          <div id="wsSqlError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Ekle</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

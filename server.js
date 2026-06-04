@@ -38,7 +38,38 @@ ensureDir(DATA_DIR);
 if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, '[]', 'utf8');
 
 function userDir(userId) { return path.join(DATA_DIR, userId); }
-function ensureUserDir(userId) { ensureDir(userDir(userId)); ensureDir(path.join(userDir(userId), 'memory')); ensureDir(path.join(userDir(userId), 'prompts')); }
+function ensureUserDir(userId) {
+  ensureDir(userDir(userId));
+  ensureDir(path.join(userDir(userId), 'memory'));
+  ensureDir(path.join(userDir(userId), 'prompts'));
+}
+
+// ============== Encryption (SQL şifreleri için) ==============
+// JWT_SECRET'tan türetilen 32-byte anahtarla AES-256-GCM
+function getCipherKey() {
+  return crypto.createHash('sha256').update(JWT_SECRET).digest();
+}
+function encryptSecret(plain) {
+  if (typeof plain !== 'string' || !plain) return null;
+  const key = getCipherKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return { iv: iv.toString('base64'), tag: tag.toString('base64'), data: enc.toString('base64') };
+}
+function decryptSecret(payload) {
+  if (!payload || !payload.iv || !payload.tag || !payload.data) return null;
+  try {
+    const key = getCipherKey();
+    const iv = Buffer.from(payload.iv, 'base64');
+    const tag = Buffer.from(payload.tag, 'base64');
+    const data = Buffer.from(payload.data, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+  } catch (_) { return null; }
+}
 
 function fileJson(p, fallback) {
   try {
@@ -516,6 +547,347 @@ app.put('/api/settings', requireAuth, async (req, res) => {
   res.json(next);
 });
 
+// ============== Workspaces ==============
+// Workspace'ler data/<userId>/workspaces/<id>.json olarak saklanır (büyük PDF/SQL içerik için)
+// Aktif workspace ise data/<userId>/settings.json içinde "activeWorkspaceId" olarak
+
+function workspaceFile(userId, wid) { return path.join(userDir(userId), 'workspaces', wid + '.json'); }
+function ensureWorkspacesDir(userId) { ensureDir(path.join(userDir(userId), 'workspaces')); }
+
+async function listWorkspaces(userId) {
+  const dir = path.join(userDir(userId), 'workspaces');
+  if (!fs.existsSync(dir)) return [];
+  const files = await fsp.readdir(dir);
+  const out = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    const data = await readJson(path.join(dir, f), null);
+    if (data) out.push(data);
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function sanitizeWorkspace(w) {
+  // Hassas alanları (SQL şifresi) dışarıya açma
+  const sources = (w.sources || []).map((s) => {
+    if (s.type === 'sql' && s.connection) {
+      return { ...s, connection: { ...s.connection, password: s.connection.password ? '••••••' : null } };
+    }
+    return s;
+  });
+  return {
+    id: w.id,
+    name: w.name,
+    description: w.description || '',
+    active: !!w.active,
+    sources,
+    createdAt: w.createdAt,
+    updatedAt: w.updatedAt
+  };
+}
+
+app.get('/api/workspaces', requireAuth, async (req, res) => {
+  const list = await listWorkspaces(req.userId);
+  res.json(list.map(sanitizeWorkspace));
+});
+
+app.post('/api/workspaces', requireAuth, async (req, res) => {
+  const { name, description } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Workspace adı gerekli' });
+  const ws = {
+    id: uid('w'),
+    name: name.trim().slice(0, 80),
+    description: typeof description === 'string' ? description.trim().slice(0, 500) : '',
+    active: false,
+    sources: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  ensureWorkspacesDir(req.userId);
+  await writeJson(workspaceFile(req.userId, ws.id), ws);
+  res.json(sanitizeWorkspace(ws));
+});
+
+app.get('/api/workspaces/:id', requireAuth, async (req, res) => {
+  const ws = await readJson(workspaceFile(req.userId, req.params.id), null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  res.json(sanitizeWorkspace(ws));
+});
+
+app.put('/api/workspaces/:id', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const { name, description, active } = req.body || {};
+  if (typeof name === 'string' && name.trim()) ws.name = name.trim().slice(0, 80);
+  if (typeof description === 'string') ws.description = description.trim().slice(0, 500);
+  if (typeof active === 'boolean') ws.active = active;
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+
+  // Active state'i settings.json'a da yansıt (chat context için tek doğruluk kaynağı)
+  if (typeof active === 'boolean') {
+    const settingsPath = path.join(userDir(req.userId), 'settings.json');
+    const settings = await readJson(settingsPath, {});
+    if (active) {
+      // Diğer workspace'leri pasifle
+      const list = await listWorkspaces(req.userId);
+      for (const other of list) {
+        if (other.id !== ws.id && other.active) {
+          other.active = false;
+          other.updatedAt = Date.now();
+          await writeJson(workspaceFile(req.userId, other.id), other);
+        }
+      }
+      settings.activeWorkspaceId = ws.id;
+    } else if (settings.activeWorkspaceId === ws.id) {
+      delete settings.activeWorkspaceId;
+    }
+    await writeJson(settingsPath, settings);
+  }
+  res.json(sanitizeWorkspace(ws));
+});
+
+app.delete('/api/workspaces/:id', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  try { await fsp.unlink(p); } catch (_) {}
+  // Settings'den active referansını temizle
+  const settingsPath = path.join(userDir(req.userId), 'settings.json');
+  const settings = await readJson(settingsPath, {});
+  if (settings.activeWorkspaceId === req.params.id) {
+    delete settings.activeWorkspaceId;
+    await writeJson(settingsPath, settings);
+  }
+  res.json({ ok: true });
+});
+
+// ----- Sources -----
+
+// Doc (markdown) kaynağı ekle
+app.post('/api/workspaces/:id/sources/doc', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const { name, content } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Kaynak adı gerekli' });
+  if (typeof content !== 'string') return res.status(400).json({ error: 'İçerik gerekli' });
+  const src = {
+    id: uid('s'),
+    type: 'doc',
+    name: name.trim().slice(0, 100),
+    content: content.slice(0, 500000), // 500KB hard cap
+    size: content.length,
+    createdAt: Date.now()
+  };
+  ws.sources.push(src);
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+  res.json(src);
+});
+
+// PDF kaynağı: base64 yükle, text'e çevir
+app.post('/api/workspaces/:id/sources/pdf', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const { name, data, contentType } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'PDF adı gerekli' });
+  if (typeof data !== 'string') return res.status(400).json({ error: 'PDF verisi (base64) gerekli' });
+  if (data.length > 30 * 1024 * 1024) return res.status(400).json({ error: 'PDF çok büyük (max 30MB)' });
+
+  let buffer;
+  try {
+    const m = data.match(/^data:[^;]+;base64,(.+)$/);
+    buffer = Buffer.from(m ? m[1] : data, 'base64');
+  } catch (_) { return res.status(400).json({ error: 'Geçersiz base64' }); }
+  if (buffer.length < 100) return res.status(400).json({ error: 'PDF verisi çok küçük' });
+
+  let text = '';
+  let pageCount = 0;
+  try {
+    const pdfParse = require('pdf-parse');
+    const parsed = await pdfParse(buffer);
+    text = parsed.text || '';
+    pageCount = parsed.numpages || 0;
+  } catch (err) {
+    return res.status(400).json({ error: 'PDF ayrıştırılamadı: ' + (err.message || 'bilinmeyen') });
+  }
+  // 500KB cap
+  text = text.slice(0, 500000);
+  const src = {
+    id: uid('s'),
+    type: 'pdf',
+    name: name.trim().slice(0, 100),
+    filename: name,
+    content: text,
+    pages: pageCount,
+    size: buffer.length,
+    createdAt: Date.now()
+  };
+  ws.sources.push(src);
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+  res.json(src);
+});
+
+// SQL kaynağı ekle — şema metin olarak veya canlı bağlantı
+app.post('/api/workspaces/:id/sources/sql', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const { name, schema, sampleData, connection } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Kaynak adı gerekli' });
+
+  let conn = null;
+  if (connection && typeof connection === 'object') {
+    const { type, host, port, database, user, password } = connection;
+    if (!['mysql', 'postgresql'].includes(type)) return res.status(400).json({ error: 'Geçersiz veritabanı tipi (mysql veya postgresql)' });
+    if (!host || !database || !user) return res.status(400).json({ error: 'host, database, user zorunlu' });
+    conn = {
+      type,
+      host: String(host).slice(0, 200),
+      port: Number(port) || (type === 'mysql' ? 3306 : 5432),
+      database: String(database).slice(0, 100),
+      user: String(user).slice(0, 100),
+      password: password ? encryptSecret(String(password)) : null,
+      ssl: connection.ssl === true,
+      lastConnected: null,
+      cachedSchema: null,
+      cachedSample: null
+    };
+  }
+  const src = {
+    id: uid('s'),
+    type: 'sql',
+    name: name.trim().slice(0, 100),
+    schema: typeof schema === 'string' ? schema.slice(0, 200000) : '',
+    sampleData: typeof sampleData === 'string' ? sampleData.slice(0, 200000) : '',
+    connection: conn,
+    createdAt: Date.now()
+  };
+  ws.sources.push(src);
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+  res.json(src);
+});
+
+// Source güncelle (ad/içerik)
+app.put('/api/workspaces/:id/sources/:sid', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const src = ws.sources.find((s) => s.id === req.params.sid);
+  if (!src) return res.status(404).json({ error: 'Kaynak bulunamadı' });
+  const { name, content, schema, sampleData } = req.body || {};
+  if (typeof name === 'string' && name.trim()) src.name = name.trim().slice(0, 100);
+  if (src.type === 'doc' && typeof content === 'string') src.content = content.slice(0, 500000);
+  if (src.type === 'sql') {
+    if (typeof schema === 'string') src.schema = schema.slice(0, 200000);
+    if (typeof sampleData === 'string') src.sampleData = sampleData.slice(0, 200000);
+  }
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+  res.json(src);
+});
+
+// Source sil
+app.delete('/api/workspaces/:id/sources/:sid', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const idx = ws.sources.findIndex((s) => s.id === req.params.sid);
+  if (idx === -1) return res.status(404).json({ error: 'Kaynak bulunamadı' });
+  ws.sources.splice(idx, 1);
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+  res.json({ ok: true });
+});
+
+// SQL canlı bağlantı testi + schema çekme
+app.post('/api/workspaces/:id/sources/:sid/refresh', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  const src = ws.sources.find((s) => s.id === req.params.sid);
+  if (!src || src.type !== 'sql' || !src.connection || !src.connection.password) {
+    return res.status(400).json({ error: 'Bu kaynak için canlı bağlantı tanımlı değil' });
+  }
+  const password = decryptSecret(src.connection.password);
+  if (!password) return res.status(500).json({ error: 'Şifre çözümlenemedi' });
+
+  try {
+    if (src.connection.type === 'mysql') {
+      const mysql = require('mysql2/promise');
+      const conn = await mysql.createConnection({
+        host: src.connection.host,
+        port: src.connection.port,
+        user: src.connection.user,
+        password,
+        database: src.connection.database,
+        ssl: src.connection.ssl ? {} : undefined,
+        connectTimeout: 5000
+      });
+      try {
+        const [tables] = await conn.query('SHOW TABLES');
+        const tableNames = tables.map((r) => Object.values(r)[0]);
+        const schemaParts = [];
+        for (const t of tableNames.slice(0, 30)) {
+          try {
+            const [cols] = await conn.query(`DESCRIBE \`${t}\``);
+            const colLines = cols.map((c) => `  ${c.Field} ${c.Type}${c.Null === 'NO' ? ' NOT NULL' : ''}${c.Key ? ` [${c.Key}]` : ''}`).join('\n');
+            schemaParts.push(`CREATE TABLE ${t} (\n${colLines}\n);`);
+          } catch (_) {}
+        }
+        src.schema = schemaParts.join('\n\n');
+        src.connection.cachedSchema = src.schema;
+        src.connection.lastConnected = Date.now();
+        ws.updatedAt = Date.now();
+        await writeJson(p, ws);
+        res.json({ ok: true, tables: tableNames.length, schemaLength: src.schema.length });
+      } finally {
+        await conn.end().catch(() => {});
+      }
+    } else if (src.connection.type === 'postgresql') {
+      const { Client } = require('pg');
+      const client = new Client({
+        host: src.connection.host,
+        port: src.connection.port,
+        user: src.connection.user,
+        password,
+        database: src.connection.database,
+        ssl: src.connection.ssl ? { rejectUnauthorized: false } : undefined,
+        connectionTimeoutMillis: 5000
+      });
+      await client.connect();
+      try {
+        const r = await client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name LIMIT 30`);
+        const tableNames = r.rows.map((row) => row.table_name);
+        const schemaParts = [];
+        for (const t of tableNames) {
+          try {
+            const cr = await client.query(`SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`, [t]);
+            const colLines = cr.rows.map((c) => `  ${c.column_name} ${c.data_type}${c.is_nullable === 'NO' ? ' NOT NULL' : ''}`).join('\n');
+            schemaParts.push(`CREATE TABLE ${t} (\n${colLines}\n);`);
+          } catch (_) {}
+        }
+        src.schema = schemaParts.join('\n\n');
+        src.connection.cachedSchema = src.schema;
+        src.connection.lastConnected = Date.now();
+        ws.updatedAt = Date.now();
+        await writeJson(p, ws);
+        res.json({ ok: true, tables: tableNames.length, schemaLength: src.schema.length });
+      } finally {
+        await client.end().catch(() => {});
+      }
+    } else {
+      res.status(400).json({ error: 'Desteklenmeyen veritabanı tipi' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Bağlantı hatası: ' + (err.message || 'bilinmeyen') });
+  }
+});
+
 // ============== Chat (builds context from memory + active prompt + deep analysis) ==============
 app.post('/api/chat', requireAuth, async (req, res) => {
   const { messages, temperature, topP, systemPromptId, activeMemoryIds } = req.body || {};
@@ -545,6 +917,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const settings = await readJson(path.join(userDir(req.userId), 'settings.json'), { temperature: 0.4, deepAnalysis: true });
   const memoryList = await listMemory(req.userId);
   const promptList = await listPrompts(req.userId);
+  const workspaceList = await listWorkspaces(req.userId);
 
   const activeMem = activeMemoryIds == null
     ? memoryList.filter((m) => m.active !== false)
@@ -553,6 +926,10 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const activePrompt = systemPromptId
     ? promptList.find((p) => p.id === systemPromptId)
     : promptList.find((p) => p.active);
+
+  const activeWorkspace = settings.activeWorkspaceId
+    ? workspaceList.find((w) => w.id === settings.activeWorkspaceId && w.active !== false)
+    : workspaceList.find((w) => w.active);
 
   const sysMessages = [];
   if (activePrompt && activePrompt.content && activePrompt.content.trim()) {
@@ -568,6 +945,39 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     sysMessages.push({
       role: 'system',
       content: `Kullanıcının uzun süreli hafıza dosyaları (bilgi tabanı). Bu bilgileri kullanıcı hakkında, şirketi/sektörü/konuyu daha iyi anlamak ve kişiselleştirilmiş yanıt vermek için referans al:\n\n${memContent}`
+    });
+  }
+  // Aktif workspace: tüm kaynaklarını bağlama ekle
+  if (activeWorkspace && activeWorkspace.sources && activeWorkspace.sources.length > 0) {
+    const wsParts = [`## Çalışma Alanı: ${activeWorkspace.name}`];
+    if (activeWorkspace.description) wsParts.push(activeWorkspace.description);
+    wsParts.push('');
+    for (const src of activeWorkspace.sources) {
+      wsParts.push(`### 📎 ${src.name} (${src.type}${src.pages ? `, ${src.pages} sayfa` : ''})`);
+      if (src.type === 'doc') {
+        wsParts.push(truncate(src.content || '', 30000));
+      } else if (src.type === 'pdf') {
+        wsParts.push(truncate(src.content || '', 30000));
+      } else if (src.type === 'sql') {
+        if (src.schema) {
+          wsParts.push('**Şema:**');
+          wsParts.push('```sql');
+          wsParts.push(truncate(src.schema, 15000));
+          wsParts.push('```');
+        }
+        if (src.sampleData) {
+          wsParts.push('**Örnek Veri:**');
+          wsParts.push(truncate(src.sampleData, 10000));
+        }
+        if (src.connection && src.connection.cachedSchema) {
+          wsParts.push(`(Canlı bağlantı: ${src.connection.type} @ ${src.connection.host}:${src.connection.port}/${src.connection.database})`);
+        }
+      }
+      wsParts.push('');
+    }
+    sysMessages.push({
+      role: 'system',
+      content: `Aşağıdaki çalışma alanı kaynakları kullanıcının sorusunu yanıtlarken referans olarak kullanılabilir. Analiz, sorgu, özet ve içgörü çıkarma gibi işlemler için bu kaynaklardan yararlan:\n\n${wsParts.join('\n')}`
     });
   }
 
@@ -654,6 +1064,11 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       memory: activeMem.length,
       prompt: activePrompt?.id || null,
       deep: !!settings.deepAnalysis,
+      workspace: activeWorkspace ? {
+        id: activeWorkspace.id,
+        name: activeWorkspace.name,
+        sources: (activeWorkspace.sources || []).map((s) => ({ id: s.id, name: s.name, type: s.type }))
+      } : null,
       fetched: fetchResults.map((r) => ({ url: r.url, ok: r.ok, format: r.format, size: r.size, error: r.error }))
     }
   });

@@ -45,6 +45,28 @@
   const adminEditError = $("adminEditError");
   const adminResetError = $("adminResetError");
   const adminResetResult = $("adminResetResult");
+  // Workspaces
+  const workspacesBtn = $("openWorkspacesBtn");
+  const workspacesCount = $("workspacesCount");
+  const workspacesModal = $("workspacesModal");
+  const wsList = $("wsList");
+  const wsEmpty = $("wsEmpty");
+  const wsSearch = $("wsSearch");
+  const wsNewBtn = $("wsNewBtn");
+  const wsEditorModal = $("wsEditorModal");
+  const wsEditorForm = $("wsEditorForm");
+  const wsEditorError = $("wsEditorError");
+  const wsDeleteBtn = $("wsDeleteBtn");
+  const wsSourcesList = $("wsSourcesList");
+  const wsAddSourceBtn = $("wsAddSourceBtn");
+  const wsSourceModal = $("wsSourceModal");
+  const wsSourceTypes = $("wsSourceTypes");
+  const wsDocForm = $("wsDocForm");
+  const wsPdfForm = $("wsPdfForm");
+  const wsSqlForm = $("wsSqlForm");
+  const wsDocError = $("wsDocError");
+  const wsPdfError = $("wsPdfError");
+  const wsSqlError = $("wsSqlError");
   const tempRange = $("tempRange");
   const tempVal = $("tempVal");
   const saveSettingsBtn = $("saveSettingsBtn");
@@ -1231,8 +1253,16 @@
       const p = state.prompts.find((x) => x.id === ctx.prompt);
       parts.push("yönerge: " + (p?.name || "aktif"));
     }
+    if (ctx.workspace) {
+      const srcCount = (ctx.workspace.sources || []).length;
+      parts.push("📁 " + ctx.workspace.name + (srcCount ? " (" + srcCount + " kaynak)" : ""));
+      ctxPill.classList.add("ws");
+    } else {
+      ctxPill.classList.remove("ws");
+    }
     if (ctx.deep) parts.push("derin analiz");
     if (parts.length > 0) ctxSummary.textContent = parts.join(" · ");
+    else ctxSummary.textContent = "—";
   }
 
   // ============== Library ==============
@@ -2297,6 +2327,329 @@
       adminResetError.hidden = false;
     }
   });
+
+  // ============== Workspaces ==============
+  let wsState = { list: [], current: null, search: "" };
+
+  function escapeWsText(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+  function renderWsList() {
+    const q = wsState.search.toLowerCase();
+    const items = wsState.list.filter((w) => !q || w.name.toLowerCase().includes(q) || (w.description || "").toLowerCase().includes(q));
+    if (items.length === 0) {
+      wsList.innerHTML = "";
+      wsEmpty.hidden = false;
+      wsEmpty.querySelector("p").textContent = q ? "Eşleşen çalışma alanı yok." : "Henüz çalışma alanı yok.";
+      return;
+    }
+    wsEmpty.hidden = true;
+    wsList.innerHTML = items.map((w) => `
+      <div class="ws-card" data-wid="${w.id}">
+        <div class="ws-icon">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 7h18M3 12h18M3 17h12"/></svg>
+        </div>
+        <div class="ws-info">
+          <div class="ws-name">${escapeWsText(w.name)} ${w.active ? '<span class="ws-active-dot" title="Aktif"></span>' : ""}</div>
+          <div class="ws-desc">${escapeWsText(w.description || "—")}</div>
+          <div class="ws-meta">
+            <span>${(w.sources || []).length} kaynak</span>
+            <span>·</span>
+            <span>${new Date(w.updatedAt).toLocaleDateString("tr-TR")}</span>
+          </div>
+        </div>
+        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M9 18l6-6-6-6"/></svg>
+      </div>
+    `).join("");
+  }
+
+  async function loadWorkspaces() {
+    try { wsState.list = await api("/api/workspaces"); }
+    catch (_) { wsState.list = []; }
+    workspacesCount.textContent = wsState.list.length;
+    renderWsList();
+  }
+
+  function openWorkspacesList() {
+    loadWorkspaces();
+    workspacesModal.hidden = false;
+    closeSidebar();
+  }
+  function closeWorkspacesList() { workspacesModal.hidden = true; }
+
+  workspacesBtn.addEventListener("click", openWorkspacesList);
+  wsSearch.addEventListener("input", (e) => { wsState.search = e.target.value.trim(); renderWsList(); });
+
+  // List click → open editor
+  wsList.addEventListener("click", (e) => {
+    const card = e.target.closest(".ws-card");
+    if (!card) return;
+    openWsEditor(card.dataset.wid);
+  });
+
+  // New workspace
+  wsNewBtn.addEventListener("click", async () => {
+    const name = prompt("Çalışma alanı adı:");
+    if (!name || !name.trim()) return;
+    try {
+      const ws = await api("/api/workspaces", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      wsState.list.unshift(ws);
+      workspacesCount.textContent = wsState.list.length;
+      openWsEditor(ws.id);
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // ===== Editor =====
+  function renderWsSources(ws) {
+    const sources = ws.sources || [];
+    if (sources.length === 0) {
+      wsSourcesList.innerHTML = '<div class="ws-source-empty">Henüz kaynak yok. Şema, doküman veya PDF ekleyin.</div>';
+      return;
+    }
+    const icon = (t) => {
+      if (t === "doc") return '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"/></svg>';
+      if (t === "pdf") return '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"/></svg>';
+      if (t === "sql") return '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 6c0-1.1.9-2 2-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2z"/></svg>';
+      return "";
+    };
+    const meta = (s) => {
+      if (s.type === "pdf") return `${s.pages || 0} sayfa · ${(s.size / 1024).toFixed(1)} KB`;
+      if (s.type === "doc") return `${(s.size / 1024).toFixed(1)} KB · ${(s.content || "").length} karakter`;
+      if (s.type === "sql") {
+        const tbls = (s.schema || "").match(/CREATE\s+TABLE/gi) || [];
+        const hasConn = s.connection ? " · canlı bağlantı" : "";
+        return `${tbls.length} tablo${hasConn}`;
+      }
+      return "";
+    };
+    wsSourcesList.innerHTML = sources.map((s) => `
+      <div class="ws-source-item" data-sid="${s.id}">
+        <div class="ws-source-icon">${icon(s.type)}</div>
+        <div class="ws-source-info">
+          <div class="ws-source-name">${escapeWsText(s.name)}</div>
+          <div class="ws-source-meta">${escapeWsText(meta(s))}</div>
+        </div>
+        <div class="ws-source-actions">
+          ${s.type === "sql" && s.connection ? `<button class="icon-btn ghost" data-action="refresh-source" data-sid="${s.id}" title="Şemayı yenile">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-3.6-7.2L21 8 M21 3v5h-5"/></svg>
+          </button>` : ""}
+          <button class="icon-btn ghost danger" data-action="delete-source" data-sid="${s.id}" title="Sil">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+          </button>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  async function openWsEditor(wid) {
+    try {
+      const ws = await api(`/api/workspaces/${wid}`);
+      wsState.current = ws;
+      wsEditorForm.elements.name.value = ws.name;
+      wsEditorForm.elements.description.value = ws.description || "";
+      wsEditorForm.elements.active.checked = !!ws.active;
+      wsEditorError.hidden = true;
+      wsDeleteBtn.hidden = false;
+      renderWsSources(ws);
+      workspacesModal.hidden = true;
+      wsEditorModal.hidden = false;
+    } catch (err) { toast(err.message, true); }
+  }
+  function closeWsEditor() {
+    wsEditorModal.hidden = true;
+    wsState.current = null;
+    loadWorkspaces(); // listeyi tazele
+  }
+
+  wsEditorForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!wsState.current) return;
+    const body = {
+      name: wsEditorForm.elements.name.value.trim(),
+      description: wsEditorForm.elements.description.value,
+      active: wsEditorForm.elements.active.checked
+    };
+    try {
+      const updated = await api(`/api/workspaces/${wsState.current.id}`, {
+        method: "PUT", body: JSON.stringify(body)
+      });
+      Object.assign(wsState.current, updated);
+      wsEditorError.hidden = true;
+      toast(updated.active ? "Aktif çalışma alanı değiştirildi" : "Çalışma alanı güncellendi");
+      closeWsEditor();
+    } catch (err) {
+      wsEditorError.textContent = err.message;
+      wsEditorError.hidden = false;
+    }
+  });
+
+  wsDeleteBtn.addEventListener("click", async () => {
+    if (!wsState.current) return;
+    if (!confirm(`"${wsState.current.name}" çalışma alanını ve tüm kaynaklarını silmek istediğinize emin misiniz?`)) return;
+    try {
+      await api(`/api/workspaces/${wsState.current.id}`, { method: "DELETE" });
+      toast("Çalışma alanı silindi");
+      closeWsEditor();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // Source actions
+  wsSourcesList.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn || !wsState.current) return;
+    const sid = btn.dataset.sid;
+    if (btn.dataset.action === "delete-source") {
+      const src = wsState.current.sources.find((s) => s.id === sid);
+      if (!confirm(`"${src?.name || sid}" kaynağını sil?`)) return;
+      try {
+        await api(`/api/workspaces/${wsState.current.id}/sources/${sid}`, { method: "DELETE" });
+        wsState.current.sources = wsState.current.sources.filter((s) => s.id !== sid);
+        renderWsSources(wsState.current);
+        toast("Kaynak silindi");
+      } catch (err) { toast(err.message, true); }
+    }
+    if (btn.dataset.action === "refresh-source") {
+      try {
+        btn.disabled = true;
+        const res = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}/refresh`, { method: "POST" });
+        const src = wsState.current.sources.find((s) => s.id === sid);
+        if (src) { src.schema = res.schema || src.schema; src.connection = { ...src.connection, cachedSchema: res.schema, lastConnected: Date.now() }; }
+        renderWsSources(wsState.current);
+        toast(`${res.tables} tablo şeması yüklendi`);
+      } catch (err) { toast(err.message, true); }
+      finally { btn.disabled = false; }
+    }
+  });
+
+  // ===== Source wizard =====
+  wsAddSourceBtn.addEventListener("click", () => {
+    if (!wsState.current) return;
+    wsDocForm.hidden = true; wsPdfForm.hidden = true; wsSqlForm.hidden = true;
+    wsSourceTypes.hidden = false;
+    wsSourceModal.hidden = false;
+  });
+
+  wsSourceTypes.addEventListener("click", (e) => {
+    const btn = e.target.closest(".ws-source-type");
+    if (!btn) return;
+    const type = btn.dataset.type;
+    wsSourceTypes.hidden = true;
+    wsDocForm.hidden = type !== "doc";
+    wsPdfForm.hidden = type !== "pdf";
+    wsSqlForm.hidden = type !== "sql";
+    if (type === "doc") wsDocForm.reset();
+    if (type === "pdf") wsPdfForm.reset();
+    if (type === "sql") wsSqlForm.reset();
+    wsDocError.hidden = true; wsPdfError.hidden = true; wsSqlError.hidden = true;
+  });
+
+  function showWsError(el, msg) { el.textContent = msg; el.hidden = false; }
+  function hideAllWsErrors() { wsDocError.hidden = true; wsPdfError.hidden = true; wsSqlError.hidden = true; }
+
+  wsDocForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!wsState.current) return;
+    hideAllWsErrors();
+    const fd = new FormData(wsDocForm);
+    try {
+      const src = await api(`/api/workspaces/${wsState.current.id}/sources/doc`, {
+        method: "POST",
+        body: JSON.stringify({ name: fd.get("name"), content: fd.get("content") })
+      });
+      wsState.current.sources.push(src);
+      renderWsSources(wsState.current);
+      wsSourceModal.hidden = true;
+      toast("Doküman eklendi");
+    } catch (err) { showWsError(wsDocError, err.message); }
+  });
+
+  wsPdfForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!wsState.current) return;
+    hideAllWsErrors();
+    const fd = new FormData(wsPdfForm);
+    const file = fd.get("file");
+    if (!file || !file.size) { showWsError(wsPdfError, "PDF dosyası seçin"); return; }
+    if (file.size > 30 * 1024 * 1024) { showWsError(wsPdfError, "PDF 30MB'dan büyük"); return; }
+    try {
+      const dataB64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      const src = await api(`/api/workspaces/${wsState.current.id}/sources/pdf`, {
+        method: "POST",
+        body: JSON.stringify({ name: fd.get("name"), data: dataB64 })
+      });
+      wsState.current.sources.push(src);
+      renderWsSources(wsState.current);
+      wsSourceModal.hidden = true;
+      toast(`PDF yüklendi (${src.pages} sayfa)`);
+    } catch (err) { showWsError(wsPdfError, err.message); }
+  });
+
+  wsSqlForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!wsState.current) return;
+    hideAllWsErrors();
+    const fd = new FormData(wsSqlForm);
+    const dbType = fd.get("dbType");
+    let connection = null;
+    if (dbType) {
+      if (!fd.get("host") || !fd.get("database") || !fd.get("user")) {
+        showWsError(wsSqlError, "Canlı bağlantı için host, database ve user zorunlu");
+        return;
+      }
+      connection = {
+        type: dbType,
+        host: fd.get("host"),
+        port: Number(fd.get("port")) || (dbType === "mysql" ? 3306 : 5432),
+        database: fd.get("database"),
+        user: fd.get("user"),
+        password: fd.get("password") || undefined,
+        ssl: !!fd.get("ssl")
+      };
+    }
+    try {
+      const src = await api(`/api/workspaces/${wsState.current.id}/sources/sql`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: fd.get("name"),
+          schema: fd.get("schema") || "",
+          sampleData: fd.get("sampleData") || "",
+          connection
+        })
+      });
+      wsState.current.sources.push(src);
+      renderWsSources(wsState.current);
+      wsSourceModal.hidden = true;
+      toast(connection ? "SQL kaynağı eklendi (canlı bağlantı)" : "SQL kaynağı eklendi");
+      if (connection) {
+        // Otomatik schema çek
+        try {
+          const res = await api(`/api/workspaces/${wsState.current.id}/sources/${src.id}/refresh`, { method: "POST" });
+          wsState.current.sources = wsState.current.sources.map((s) => s.id === src.id ? { ...s, schema: res.schema || s.schema, connection: { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() } } : s);
+          renderWsSources(wsState.current);
+          toast(`${res.tables} tablo şeması otomatik çekildi`);
+        } catch (err) {
+          toast("Şema çekilemedi: " + err.message + " (bağlantıyı kontrol edin)", true);
+        }
+      }
+    } catch (err) { showWsError(wsSqlError, err.message); }
+  });
+
+  // Escape ile modal kapatma
+  const origKeydown = document.addEventListener;
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (!wsSourceModal.hidden) { wsSourceModal.hidden = true; e.stopPropagation(); return; }
+      if (!wsEditorModal.hidden) { closeWsEditor(); e.stopPropagation(); return; }
+      if (!workspacesModal.hidden) { closeWorkspacesList(); e.stopPropagation(); return; }
+    }
+  });
+
+  // Boot'ta yükle
+  if (state.user) loadWorkspaces();
 
   // ============== Init ==============
   checkSession();
