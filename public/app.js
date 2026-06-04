@@ -104,6 +104,7 @@
     pendingNewCount: 0,
     atBottom: true,
     attachments: [], // [{name, size, content, type}]
+    modelName: "sentra", // upstream'den gelen model adı, "Düşünüyor..." geri çevirmek için
     images: [] // [{name, size, mime, dataUrl, url, serverUrl}]
   };
 
@@ -1033,14 +1034,27 @@
         let payload;
         try { payload = JSON.parse(currentData); } catch (_) { currentEvent = "message"; currentData = ""; return; }
         if (currentEvent === "open") {
-          if (payload?.model) modelTag.textContent = payload.model + " · Report";
+          if (payload?.model) {
+            state.modelName = payload.model;
+            modelTag.textContent = payload.model + " · Report";
+          }
           setStatus("ok");
           if (payload.context) updateCtxPillFromContext(payload.context);
           if (payload?.context?.fetched) {
             showFetchIndicator(payload.context.fetched);
           }
+        } else if (currentEvent === "thinking") {
+          // Upstream yanıt verene kadar geçen süreyi göster
+          if (!firstTokenAt) {
+            const s = payload?.elapsedSec;
+            if (typeof s === "number") modelTag.textContent = `Düşünüyor… ${s}s`;
+          }
         } else if (currentEvent === "token") {
-          if (!firstTokenAt) firstTokenAt = performance.now();
+          if (!firstTokenAt) {
+            firstTokenAt = performance.now();
+            // İlk token gelince model adını geri yükle
+            modelTag.textContent = (state.modelName || "sentra") + " · Report";
+          }
           assistantText += payload.delta || "";
           assistantMsg.content = assistantText;
           updateAssistantContent(wrap, assistantText);

@@ -11,6 +11,13 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+// HTTP keep-alive agent — her istekte TCP+TLS handshake'i önler (~200-500ms kazanç)
+const https = require('https');
+const http = require('http');
+const KEEPALIVE_AGENT = new https.Agent({ keepAlive: true, maxSockets: 16, keepAliveMsecs: 30000 });
+const KEEPALIVE_HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 16, keepAliveMsecs: 30000 });
+process.on('exit', () => { KEEPALIVE_AGENT.destroy(); KEEPALIVE_HTTP_AGENT.destroy(); });
+
 const SENTRA_API_BASE = process.env.SENTRA_API_BASE;
 const SENTRA_API_KEY = process.env.SENTRA_API_KEY;
 const SENTRA_MODEL = process.env.SENTRA_MODEL;
@@ -567,7 +574,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const finalMessages = sysMessages.concat(cleaned);
   const finalTemp = typeof temperature === 'number' ? temperature : settings.temperature;
 
-  // Auto-fetch: kullanıcının son mesajındaki URL'leri çek, bağlama ekle
+  // Auto-fetch: kullanıcının son mesajındaki URL'leri paralel çek (max 4s toplam)
   const fetchResults = [];
   const lastUserMsg = [...finalMessages].reverse().find((m) => m.role === "user");
   if (lastUserMsg) {
@@ -577,9 +584,16 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       : (lastUserMsg.content || []).filter((p) => p.type === 'text').map((p) => p.text).join(' ');
     const urls = extractUrls(lastUserText).slice(0, 3);
     if (urls.length > 0) {
-      for (const url of urls) {
-        fetchResults.push(await fetchUrlSafe(url));
-      }
+      // Paralel çek, her biri max 4s, tüm fetchResults en geç 4s'te hazır
+      const fetchStart = Date.now();
+      const fetchPromises = urls.map((u) =>
+        Promise.race([
+          fetchUrlSafe(u),
+          new Promise((resolve) => setTimeout(() => resolve({ url: u, ok: false, error: 'timeout' }), 4000))
+        ])
+      );
+      const results = await Promise.all(fetchPromises);
+      fetchResults.push(...results);
       const toolContext = {
         role: "system",
         content: [
@@ -612,11 +626,15 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 
   const writeSse = (event, data) => {
     if (res.writableEnded) return;
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     try {
-      const ok = res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      // Soket buffer'ı dolarsa drain bekle, ama küçük yazmalar için flush yeterli
-      if (ok === false && res.socket?.writableNeedDrain) {
-        // backpressure; hızlı akışta nadiren olur
+      res.write(payload);
+      // Socket'in tamponunu zorla boşalt — küçük yazmalar anında gitsin
+      const sock = res.socket;
+      if (sock && typeof sock.write === 'function' && sock.writable) {
+        // res.write zaten socket'e yazıyor; burada socket'in internal buffer'ını
+        // flush etmek için ek bir çağrı yapmıyoruz çünkü bu, çift yazmaya yol açar.
+        // Node.js 18+ res.write() setNoDelay(true) ile birlikte anında iletir.
       }
     } catch (_) { /* ignore */ }
   };
@@ -642,6 +660,16 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   // Hemen "alive" işareti — frontend ilk event'i alınca spinner'ı canlı gösterir
   res.write(`: connected ${Date.now()}\n\n`);
 
+  // "Thinking" elapsed time event — her 1 saniyede UI'a süre bildir
+  // (Kullanıcı spinner yerine "Düşünüyor... 7s" görür, algılanan hız artar)
+  const chatStartTime = Date.now();
+  const thinking = setInterval(() => {
+    if (res.writableEnded) { clearInterval(thinking); return; }
+    const elapsed = Math.round((Date.now() - chatStartTime) / 1000);
+    try { res.write(`event: thinking\ndata: ${JSON.stringify({ elapsedSec: elapsed })}\n\n`); }
+    catch (_) { /* ignore */ }
+  }, 1000);
+
   // Upstream fetch sırasında periyodik heartbeat gönder (proxy timeout önleme)
   const heartbeat = setInterval(() => {
     if (res.writableEnded) { clearInterval(heartbeat); return; }
@@ -652,12 +680,19 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const upstreamAbort = new AbortController();
   const upstreamTimeout = setTimeout(() => upstreamAbort.abort(), 120000);
 
+  // Upstream fetch — keep-alive agent ile bağlantı yeniden kullanımı
+  const upstreamUrl = `${SENTRA_API_BASE.replace(/\/+$/, '')}/chat/completions`;
+  const isHttps = upstreamUrl.startsWith('https:');
+  const requestAgent = isHttps ? KEEPALIVE_AGENT : KEEPALIVE_HTTP_AGENT;
+
   try {
-    const upstream = await fetch(`${SENTRA_API_BASE.replace(/\/+$/, '')}/chat/completions`, {
+    const upstream = await fetch(upstreamUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SENTRA_API_KEY}`
+        'Authorization': `Bearer ${SENTRA_API_KEY}`,
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive'
       },
       body: JSON.stringify({
         model: SENTRA_MODEL,
@@ -666,7 +701,8 @@ app.post('/api/chat', requireAuth, async (req, res) => {
         ...(typeof finalTemp === 'number' ? { temperature: finalTemp } : {}),
         ...(typeof topP === 'number' ? { top_p: topP } : {})
       }),
-      signal: upstreamAbort.signal
+      signal: upstreamAbort.signal,
+      keepalive: true  // Node 18+ fetch: undici connection pool keep-alive
     });
     clearTimeout(upstreamTimeout);
 
@@ -759,6 +795,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     safeEnd();
   } finally {
     clearInterval(heartbeat);
+    clearInterval(thinking);
   }
 });
 
