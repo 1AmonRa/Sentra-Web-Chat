@@ -589,11 +589,25 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
+  // Nagle algoritmasını kapat → küçük yazmalar anında iletilsin
+  if (res.socket && res.socket.setNoDelay) {
+    try { res.socket.setNoDelay(true); } catch (_) { /* ignore */ }
+  }
+
   const writeSse = (event, data) => {
     if (res.writableEnded) return;
     try {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      const ok = res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      // Soket buffer'ı dolarsa drain bekle, ama küçük yazmalar için flush yeterli
+      if (ok === false && res.socket?.writableNeedDrain) {
+        // backpressure; hızlı akışta nadiren olur
+      }
     } catch (_) { /* ignore */ }
+  };
+  // Yorum satırı (heartbeat) — SSE protokolünde ":\n\n" comment proxy'lerin timeout'unu önler
+  const writeHeartbeat = () => {
+    if (res.writableEnded) return;
+    try { res.write(`: keep-alive ${Date.now()}\n\n`); } catch (_) { /* ignore */ }
   };
   const safeEnd = () => {
     if (res.writableEnded) return;
@@ -609,6 +623,18 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       fetched: fetchResults.map((r) => ({ url: r.url, ok: r.ok, format: r.format, size: r.size, error: r.error }))
     }
   });
+  // Hemen "alive" işareti — frontend ilk event'i alınca spinner'ı canlı gösterir
+  res.write(`: connected ${Date.now()}\n\n`);
+
+  // Upstream fetch sırasında periyodik heartbeat gönder (proxy timeout önleme)
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) { clearInterval(heartbeat); return; }
+    writeHeartbeat();
+  }, 8000);
+
+  // Upstream fetch'e timeout koy (120s) — takılırsa client'a hata dön
+  const upstreamAbort = new AbortController();
+  const upstreamTimeout = setTimeout(() => upstreamAbort.abort(), 120000);
 
   try {
     const upstream = await fetch(`${SENTRA_API_BASE.replace(/\/+$/, '')}/chat/completions`, {
@@ -623,8 +649,10 @@ app.post('/api/chat', requireAuth, async (req, res) => {
         stream: true,
         ...(typeof finalTemp === 'number' ? { temperature: finalTemp } : {}),
         ...(typeof topP === 'number' ? { top_p: topP } : {})
-      })
+      }),
+      signal: upstreamAbort.signal
     });
+    clearTimeout(upstreamTimeout);
 
     if (!upstream.ok) {
       let detail = '';
@@ -640,19 +668,32 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     const isStream = ctype.includes('text/event-stream');
 
     if (!isStream || !upstream.body) {
+      // Upstream tam JSON döndü — yapay streaming ile kelime-kelime gönder
       const text = await upstream.text();
+      let msgContent = '';
       try {
         const payload = JSON.parse(text);
-        const msgContent = payload?.choices?.[0]?.message?.content;
-        if (typeof msgContent === 'string' && msgContent.length > 0) {
-          writeSse('token', { delta: msgContent });
-        } else {
-          writeSse('error', { message: 'Upstream beklenmeyen yanıt formatı', detail: text.slice(0, 2000) });
-        }
-      } catch (_) {
-        writeSse('error', { message: 'Upstream yanıtı ayrıştırılamadı', detail: text.slice(0, 2000) });
+        msgContent = payload?.choices?.[0]?.message?.content;
+      } catch (_) { /* parse hatası aşağıda yakalanır */ }
+      if (typeof msgContent !== 'string' || msgContent.length === 0) {
+        writeSse('error', { message: 'Upstream beklenmeyen yanıt formatı', detail: text.slice(0, 2000) });
+        writeSse('done', { content: '' });
+        return safeEnd();
       }
-      writeSse('done', { content: '' });
+      // Metni token benzeri parçalara böl: kelime sınırında, ~3-6 karakter
+      const tokens = tokenizeForStreaming(msgContent);
+      const delayMs = 18; // ~55 token/sn → doğal akan metin hissi
+      let totalSent = '';
+      for (let i = 0; i < tokens.length; i++) {
+        if (res.writableEnded) break;
+        const tk = tokens[i];
+        totalSent += tk;
+        writeSse('token', { delta: tk });
+        // Her yazma sonrası setNoDelay zaten açık; küçük await socket flush
+        if (i % 4 === 0) await new Promise((r) => setImmediate(r));
+        else await new Promise((r) => setTimeout(r, delayMs));
+      }
+      writeSse('done', { content: totalSent });
       return safeEnd();
     }
 
@@ -693,8 +734,15 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     safeEnd();
   } catch (err) {
     const msg = (err && err.message) || 'Bilinmeyen hata';
-    writeSse('error', { message: `Sunucu hatası: ${msg}` });
+    const isTimeout = err && (err.name === 'AbortError' || /aborted/i.test(msg));
+    writeSse('error', {
+      message: isTimeout
+        ? 'Upstream zaman aşımı (120s). Lütfen tekrar deneyin veya daha kısa bir bağlam kullanın.'
+        : `Sunucu hatası: ${msg}`
+    });
     safeEnd();
+  } finally {
+    clearInterval(heartbeat);
   }
 });
 
@@ -726,6 +774,22 @@ function truncate(s, n) {
   if (!s) return "";
   if (s.length <= n) return s;
   return s.slice(0, n) + "\n... (kırpıldı)";
+}
+
+// Metni SSE token'larına böl — kelime bütünlüğünü koruyarak ~3-6 karakter
+function tokenizeForStreaming(text) {
+  if (!text) return [];
+  const out = [];
+  // Kelimeler ve boşluk/noktalama karakterlerini ayrı token olarak bırak
+  const re = /(\s+|[^\s]+)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const w = m[1];
+    if (w.length <= 8) { out.push(w); continue; }
+    // Uzun kelime: 3-4 karakterlik parçalara böl
+    for (let i = 0; i < w.length; i += 4) out.push(w.slice(i, i + 4));
+  }
+  return out;
 }
 
 async function fetchUrlSafe(url) {
