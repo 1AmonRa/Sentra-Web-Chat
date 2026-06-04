@@ -458,6 +458,102 @@
     </div>
   </div>
 
+  <!-- ============== WORKSPACE SOURCE EDIT MODAL ============== -->
+  <div class="modal" id="wsEditSourceModal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="wsEditSrcTitle">
+      <header class="modal-head">
+        <h2 id="wsEditSrcTitle">Kaynağı Düzenle</h2>
+        <button class="icon-btn ghost" data-close aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="modal-body">
+        <!-- Doc/PDF edit form -->
+        <form id="wsEditDocForm" class="form" hidden>
+          <label class="field">
+            <span>Kaynak adı</span>
+            <input type="text" name="name" maxlength="100" required />
+          </label>
+          <label class="field">
+            <span id="wsEditDocContentLabel">İçerik</span>
+            <textarea name="content" required style="min-height:220px"></textarea>
+          </label>
+          <div class="muted">Düzenleme yapıp "Kaydet" deyince yeni içerik sohbete gönderilir.</div>
+          <div id="wsEditDocError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Kaydet</button>
+          </div>
+        </form>
+
+        <!-- SQL edit form -->
+        <form id="wsEditSqlForm" class="form" hidden>
+          <label class="field">
+            <span>Kaynak adı</span>
+            <input type="text" name="name" maxlength="100" required />
+          </label>
+          <details class="ws-sql-section" open>
+            <summary>📋 Şema (CREATE TABLE ifadeleri)</summary>
+            <label class="field" style="margin-top:10px">
+              <span>Şema metni</span>
+              <textarea name="schema" style="min-height:140px;font-family:var(--font-mono)"></textarea>
+            </label>
+          </details>
+          <details class="ws-sql-section">
+            <summary>📊 Örnek veri (CSV / JSON)</summary>
+            <label class="field" style="margin-top:10px">
+              <span>Örnek veri (opsiyonel)</span>
+              <textarea name="sampleData" style="min-height:100px;font-family:var(--font-mono)"></textarea>
+            </label>
+          </details>
+          <details class="ws-sql-section">
+            <summary>🔌 Canlı bağlantı bilgileri</summary>
+            <p class="muted" style="margin:8px 0">Şifre alanını boş bırakırsan mevcut şifre korunur. Yeni şifre yazarsan AES-256-GCM ile yeniden şifrelenir ve cache temizlenir (otomatik şema yenilenir).</p>
+            <div class="ws-sql-conn">
+              <label class="field">
+                <span>Veritabanı tipi</span>
+                <select name="dbType">
+                  <option value="mysql">MySQL</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Host</span>
+                <input type="text" name="host" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="number" name="port" />
+              </label>
+              <label class="field">
+                <span>Veritabanı</span>
+                <input type="text" name="database" />
+              </label>
+              <label class="field">
+                <span>Kullanıcı</span>
+                <input type="text" name="user" />
+              </label>
+              <label class="field">
+                <span>Yeni şifre (boş bırak = mevcut)</span>
+                <input type="password" name="password" placeholder="Mevcut şifre korunur" />
+              </label>
+              <label class="field-check">
+                <input type="checkbox" name="ssl" />
+                <span>SSL kullan</span>
+              </label>
+            </div>
+          </details>
+          <div id="wsEditSqlError" class="form-error" hidden></div>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" data-close>İptal</button>
+            <button type="submit" class="btn primary">Kaydet ve Şemayı Yenile</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <!-- ============== MEMORY/PROMPT EDITOR ============== -->
   <div class="modal" id="editorModal" hidden>
     <div class="modal-backdrop" data-close></div>

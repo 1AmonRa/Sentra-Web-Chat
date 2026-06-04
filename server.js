@@ -779,12 +779,37 @@ app.put('/api/workspaces/:id/sources/:sid', requireAuth, async (req, res) => {
   if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
   const src = ws.sources.find((s) => s.id === req.params.sid);
   if (!src) return res.status(404).json({ error: 'Kaynak bulunamadı' });
-  const { name, content, schema, sampleData } = req.body || {};
+  const { name, content, schema, sampleData, connection } = req.body || {};
   if (typeof name === 'string' && name.trim()) src.name = name.trim().slice(0, 100);
   if (src.type === 'doc' && typeof content === 'string') src.content = content.slice(0, 500000);
   if (src.type === 'sql') {
     if (typeof schema === 'string') src.schema = schema.slice(0, 200000);
     if (typeof sampleData === 'string') src.sampleData = sampleData.slice(0, 200000);
+    // Connection bilgileri güncelle (yalnızca SQL kaynaklar için)
+    if (connection && typeof connection === 'object') {
+      const c = src.connection || {};
+      // connection null gönderilirse bağlantıyı kaldır
+      if (connection.clear === true) {
+        src.connection = null;
+      } else {
+        if (typeof connection.type === 'string' && ['mysql', 'postgresql'].includes(connection.type)) c.type = connection.type;
+        if (typeof connection.host === 'string' && connection.host.trim()) c.host = connection.host.trim().slice(0, 200);
+        if (connection.port != null) c.port = Number(connection.port) || (c.type === 'mysql' ? 3306 : 5432);
+        if (typeof connection.database === 'string' && connection.database.trim()) c.database = connection.database.trim().slice(0, 100);
+        if (typeof connection.user === 'string' && connection.user.trim()) c.user = connection.user.trim().slice(0, 100);
+        // Şifre: boş string veya null/undefined gönderilirse dokunma; aksi halde yeniden şifrele
+        if (typeof connection.password === 'string' && connection.password.length > 0) {
+          c.password = encryptSecret(connection.password);
+          c.lastConnected = null;
+          c.cachedSchema = null;
+        }
+        if (typeof connection.ssl === 'boolean') c.ssl = connection.ssl;
+        // İlk kez bağlantı ekleniyorsa varsayılan alanları doldur
+        if (!c.type) c.type = 'mysql';
+        if (!c.port) c.port = c.type === 'mysql' ? 3306 : 5432;
+        src.connection = c;
+      }
+    }
   }
   ws.updatedAt = Date.now();
   await writeJson(p, ws);

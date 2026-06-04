@@ -67,6 +67,13 @@
   const wsDocError = $("wsDocError");
   const wsPdfError = $("wsPdfError");
   const wsSqlError = $("wsSqlError");
+  // Edit modal
+  const wsEditSourceModal = $("wsEditSourceModal");
+  const wsEditDocForm = $("wsEditDocForm");
+  const wsEditDocError = $("wsEditDocError");
+  const wsEditSqlForm = $("wsEditSqlForm");
+  const wsEditSqlError = $("wsEditSqlError");
+  const wsEditDocContentLabel = $("wsEditDocContentLabel");
   const tempRange = $("tempRange");
   const tempVal = $("tempVal");
   const saveSettingsBtn = $("saveSettingsBtn");
@@ -2432,6 +2439,9 @@
           ${s.type === "sql" && s.connection ? `<button class="icon-btn ghost" data-action="refresh-source" data-sid="${s.id}" title="Şemayı yenile">
             <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-3.6-7.2L21 8 M21 3v5h-5"/></svg>
           </button>` : ""}
+          <button class="icon-btn ghost" data-action="edit-source" data-sid="${s.id}" title="Düzenle">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
           <button class="icon-btn ghost danger" data-action="delete-source" data-sid="${s.id}" title="Sil">
             <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
           </button>
@@ -2497,9 +2507,10 @@
     const btn = e.target.closest("button[data-action]");
     if (!btn || !wsState.current) return;
     const sid = btn.dataset.sid;
+    const src = wsState.current.sources.find((s) => s.id === sid);
+    if (!src) return;
     if (btn.dataset.action === "delete-source") {
-      const src = wsState.current.sources.find((s) => s.id === sid);
-      if (!confirm(`"${src?.name || sid}" kaynağını sil?`)) return;
+      if (!confirm(`"${src.name}" kaynağını sil?`)) return;
       try {
         await api(`/api/workspaces/${wsState.current.id}/sources/${sid}`, { method: "DELETE" });
         wsState.current.sources = wsState.current.sources.filter((s) => s.id !== sid);
@@ -2511,12 +2522,125 @@
       try {
         btn.disabled = true;
         const res = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}/refresh`, { method: "POST" });
-        const src = wsState.current.sources.find((s) => s.id === sid);
-        if (src) { src.schema = res.schema || src.schema; src.connection = { ...src.connection, cachedSchema: res.schema, lastConnected: Date.now() }; }
+        const s = wsState.current.sources.find((x) => x.id === sid);
+        if (s) { s.schema = res.schema || s.schema; s.connection = { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() }; }
         renderWsSources(wsState.current);
         toast(`${res.tables} tablo şeması yüklendi`);
       } catch (err) { toast(err.message, true); }
       finally { btn.disabled = false; }
+    }
+    if (btn.dataset.action === "edit-source") {
+      openWsEditSource(src);
+    }
+  });
+
+  // ===== Edit source modal =====
+  function openWsEditSource(src) {
+    if (src.type === "doc") {
+      wsEditDocForm.elements.name.value = src.name;
+      wsEditDocForm.elements.content.value = src.content || "";
+      wsEditDocContentLabel.textContent = "İçerik (Markdown / düz metin)";
+      wsEditDocForm.dataset.sid = src.id;
+      wsEditDocError.hidden = true;
+      wsEditDocForm.hidden = false;
+      wsEditSqlForm.hidden = true;
+    } else if (src.type === "pdf") {
+      wsEditDocForm.elements.name.value = src.name;
+      wsEditDocForm.elements.content.value = src.content || "";
+      wsEditDocContentLabel.textContent = "PDF metni (otomatik çıkarıldı — düzenlenebilir)";
+      wsEditDocForm.dataset.sid = src.id;
+      wsEditDocError.hidden = true;
+      wsEditDocForm.hidden = false;
+      wsEditSqlForm.hidden = true;
+    } else if (src.type === "sql") {
+      wsEditSqlForm.elements.name.value = src.name;
+      wsEditSqlForm.elements.schema.value = src.schema || "";
+      wsEditSqlForm.elements.sampleData.value = src.sampleData || "";
+      if (src.connection) {
+        wsEditSqlForm.elements.dbType.value = src.connection.type || "mysql";
+        wsEditSqlForm.elements.host.value = src.connection.host || "";
+        wsEditSqlForm.elements.port.value = src.connection.port || "";
+        wsEditSqlForm.elements.database.value = src.connection.database || "";
+        wsEditSqlForm.elements.user.value = src.connection.user || "";
+        wsEditSqlForm.elements.password.value = "";
+        wsEditSqlForm.elements.ssl.checked = !!src.connection.ssl;
+      } else {
+        wsEditSqlForm.reset();
+      }
+      wsEditSqlForm.dataset.sid = src.id;
+      wsEditSqlError.hidden = true;
+      wsEditSqlForm.hidden = false;
+      wsEditDocForm.hidden = true;
+    }
+    wsEditSourceModal.hidden = false;
+  }
+
+  wsEditDocForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const sid = wsEditDocForm.dataset.sid;
+    const body = {
+      name: wsEditDocForm.elements.name.value.trim(),
+      content: wsEditDocForm.elements.content.value
+    };
+    try {
+      const updated = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}`, {
+        method: "PUT", body: JSON.stringify(body)
+      });
+      // Yerel kopyayı güncelle
+      const idx = wsState.current.sources.findIndex((s) => s.id === sid);
+      if (idx >= 0) wsState.current.sources[idx] = { ...wsState.current.sources[idx], ...updated };
+      renderWsSources(wsState.current);
+      wsEditSourceModal.hidden = true;
+      toast("İçerik güncellendi");
+    } catch (err) {
+      wsEditDocError.textContent = err.message;
+      wsEditDocError.hidden = false;
+    }
+  });
+
+  wsEditSqlForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const sid = wsEditSqlForm.dataset.sid;
+    const fd = new FormData(wsEditSqlForm);
+    const connection = {
+      type: fd.get("dbType"),
+      host: fd.get("host"),
+      port: fd.get("port"),
+      database: fd.get("database"),
+      user: fd.get("user"),
+      password: fd.get("password") || "",  // boşsa server korur
+      ssl: !!fd.get("ssl")
+    };
+    try {
+      const updated = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: fd.get("name"),
+          schema: fd.get("schema") || "",
+          sampleData: fd.get("sampleData") || "",
+          connection
+        })
+      });
+      const idx = wsState.current.sources.findIndex((s) => s.id === sid);
+      if (idx >= 0) wsState.current.sources[idx] = { ...wsState.current.sources[idx], ...updated };
+      renderWsSources(wsState.current);
+      wsEditSourceModal.hidden = true;
+      toast("Bağlantı güncellendi");
+      // Eğer şifre değiştiyse otomatik şema yenile
+      if (fd.get("password")) {
+        try {
+          const res = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}/refresh`, { method: "POST" });
+          const s = wsState.current.sources.find((x) => x.id === sid);
+          if (s) { s.schema = res.schema || s.schema; s.connection = { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() }; }
+          renderWsSources(wsState.current);
+          toast(`Yeni şifreyle ${res.tables} tablo şeması yüklendi`);
+        } catch (err) {
+          toast("Şema yenilenemedi: " + err.message, true);
+        }
+      }
+    } catch (err) {
+      wsEditSqlError.textContent = err.message;
+      wsEditSqlError.hidden = false;
     }
   });
 
@@ -2639,9 +2763,9 @@
   });
 
   // Escape ile modal kapatma
-  const origKeydown = document.addEventListener;
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (!wsEditSourceModal.hidden) { wsEditSourceModal.hidden = true; e.stopPropagation(); return; }
       if (!wsSourceModal.hidden) { wsSourceModal.hidden = true; e.stopPropagation(); return; }
       if (!wsEditorModal.hidden) { closeWsEditor(); e.stopPropagation(); return; }
       if (!workspacesModal.hidden) { closeWorkspacesList(); e.stopPropagation(); return; }
