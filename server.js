@@ -104,7 +104,23 @@ function applyBootstrapAdmins() {
 // ============== Middleware ==============
 app.use(express.json({ limit: '15mb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  // Tarayıcı ve CDN'in eski versiyonu tutmasını engelle
+  etag: false,
+  lastModified: false,
+  setHeaders: (res, filePath) => {
+    // HTML — her zaman revalidate et
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+    // JS / CSS — kısa cache + revalidate
+    else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  }
+}));
 
 function requireAuth(req, res, next) {
   const token = req.cookies?.token;
