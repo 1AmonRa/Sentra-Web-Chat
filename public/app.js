@@ -74,6 +74,12 @@
   const wsEditSqlForm = $("wsEditSqlForm");
   const wsEditSqlError = $("wsEditSqlError");
   const wsEditDocContentLabel = $("wsEditDocContentLabel");
+  const wsEditTablesSection = $("wsEditTablesSection");
+  const wsEditTablesSummary = $("wsEditTablesSummary");
+  const wsEditTablesList = $("wsEditTablesList");
+  const wsTablesAllBtn = $("wsTablesAllBtn");
+  const wsTablesNoneBtn = $("wsTablesNoneBtn");
+  const wsTablesFilter = $("wsTablesFilter");
   const tempRange = $("tempRange");
   const tempVal = $("tempVal");
   const saveSettingsBtn = $("saveSettingsBtn");
@@ -2422,9 +2428,11 @@
       if (s.type === "pdf") return `${s.pages || 0} sayfa · ${(s.size / 1024).toFixed(1)} KB`;
       if (s.type === "doc") return `${(s.size / 1024).toFixed(1)} KB · ${(s.content || "").length} karakter`;
       if (s.type === "sql") {
-        const tbls = (s.schema || "").match(/CREATE\s+TABLE/gi) || [];
+        const totalTables = Array.isArray(s.tables) ? s.tables.length : ((s.schema || "").match(/CREATE\s+TABLE/gi) || []).length;
+        const selected = Array.isArray(s.tables) ? s.tables.filter((t) => t.selected).length : null;
+        const tableInfo = selected != null ? `${selected}/${totalTables} tablo seçili` : `${totalTables} tablo`;
         const hasConn = s.connection ? " · canlı bağlantı" : "";
-        return `${tbls.length} tablo${hasConn}`;
+        return `${tableInfo}${hasConn}`;
       }
       return "";
     };
@@ -2523,9 +2531,17 @@
         btn.disabled = true;
         const res = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}/refresh`, { method: "POST" });
         const s = wsState.current.sources.find((x) => x.id === sid);
-        if (s) { s.schema = res.schema || s.schema; s.connection = { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() }; }
+        if (s) {
+          // Sunucudan dönen tablo listesini kaynağa yansıt
+          if (res.tableList && Array.isArray(res.tableList)) {
+            s.tables = res.tableList.map((t) => ({ name: t.name, selected: t.selected, schema: "" }));
+          }
+          s.schema = res.schema || s.schema;
+          s.connection = { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() };
+        }
         renderWsSources(wsState.current);
-        toast(`${res.tables} tablo şeması yüklendi`);
+        toast(`${res.selected}/${res.tables} tablo seçili — seçimi ayarlamak için Düzenle'ye tıklayın`);
+        if (res.tableList) openWsEditSource(s); // doğrudan tablo seçim ekranını aç
       } catch (err) { toast(err.message, true); }
       finally { btn.disabled = false; }
     }
@@ -2571,9 +2587,68 @@
       wsEditSqlError.hidden = true;
       wsEditSqlForm.hidden = false;
       wsEditDocForm.hidden = true;
+      // Tablo seçim bölümü
+      renderEditTables(src);
     }
     wsEditSourceModal.hidden = false;
   }
+
+  // ===== Tablo seçim listesi (SQL edit) =====
+  let editTablesFilter = "";
+  function renderEditTables(src) {
+    const tables = Array.isArray(src.tables) ? src.tables : [];
+    if (tables.length === 0) {
+      wsEditTablesSection.hidden = true;
+      return;
+    }
+    wsEditTablesSection.hidden = false;
+    const selected = tables.filter((t) => t.selected).length;
+    wsEditTablesSummary.textContent = `📑 Tablolar (${selected} seçili / ${tables.length} toplam) — AI context'e sadece seçili olanlar dahil edilir`;
+    const q = editTablesFilter.toLowerCase();
+    const visible = q ? tables.filter((t) => t.name.toLowerCase().includes(q)) : tables;
+    wsEditTablesList.innerHTML = visible.map((t) => `
+      <label data-tname="${escapeWsText(t.name)}">
+        <input type="checkbox" data-tbl-select="${escapeWsText(t.name)}" ${t.selected ? "checked" : ""} />
+        <span>${escapeWsText(t.name)}</span>
+      </label>
+    `).join("") || '<div class="muted" style="padding:8px">Eşleşen tablo yok.</div>';
+  }
+
+  wsTablesFilter.addEventListener("input", (e) => {
+    editTablesFilter = e.target.value.trim();
+    if (wsState.current) {
+      const src = wsState.current.sources.find((s) => s.id === wsEditSqlForm.dataset.sid);
+      if (src) renderEditTables(src);
+    }
+  });
+
+  wsTablesAllBtn.addEventListener("click", () => {
+    if (!wsState.current) return;
+    const src = wsState.current.sources.find((s) => s.id === wsEditSqlForm.dataset.sid);
+    if (!src || !Array.isArray(src.tables)) return;
+    src.tables = src.tables.map((t) => ({ ...t, selected: true }));
+    renderEditTables(src);
+  });
+  wsTablesNoneBtn.addEventListener("click", () => {
+    if (!wsState.current) return;
+    const src = wsState.current.sources.find((s) => s.id === wsEditSqlForm.dataset.sid);
+    if (!src || !Array.isArray(src.tables)) return;
+    src.tables = src.tables.map((t) => ({ ...t, selected: false }));
+    renderEditTables(src);
+  });
+
+  // Checkbox değişimi (event delegation)
+  wsEditTablesList.addEventListener("change", (e) => {
+    const cb = e.target.closest("input[data-tbl-select]");
+    if (!cb || !wsState.current) return;
+    const name = cb.dataset.tblSelect;
+    const src = wsState.current.sources.find((s) => s.id === wsEditSqlForm.dataset.sid);
+    if (!src || !Array.isArray(src.tables)) return;
+    src.tables = src.tables.map((t) => t.name === name ? { ...t, selected: cb.checked } : t);
+    // Sadece özet güncelle (performans)
+    const selected = src.tables.filter((t) => t.selected).length;
+    wsEditTablesSummary.textContent = `📑 Tablolar (${selected} seçili / ${src.tables.length} toplam) — AI context'e sadece seçili olanlar dahil edilir`;
+  });
 
   wsEditDocForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -2612,6 +2687,20 @@
       ssl: !!fd.get("ssl")
     };
     try {
+      // Önce tablolar listesini kaydet (eğer varsa)
+      const localSrc = wsState.current.sources.find((s) => s.id === sid);
+      if (localSrc && Array.isArray(localSrc.tables) && localSrc.tables.length > 0) {
+        const selectedNames = localSrc.tables.filter((t) => t.selected).map((t) => t.name);
+        try {
+          await api(`/api/workspaces/${wsState.current.id}/sources/${sid}/tables`, {
+            method: "PUT",
+            body: JSON.stringify({ selected: selectedNames })
+          });
+        } catch (err) {
+          // Tablo güncellemesi başarısız olursa yine de bağlantıyı güncellemeyi dene
+          toast("Tablo seçimi güncellenemedi: " + err.message, true);
+        }
+      }
       const updated = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -2625,15 +2714,25 @@
       if (idx >= 0) wsState.current.sources[idx] = { ...wsState.current.sources[idx], ...updated };
       renderWsSources(wsState.current);
       wsEditSourceModal.hidden = true;
-      toast("Bağlantı güncellendi");
+      const selectedCount = localSrc?.tables?.filter((t) => t.selected).length;
+      const totalCount = localSrc?.tables?.length;
+      if (selectedCount != null && totalCount) {
+        toast(`Kaydedildi: ${selectedCount}/${totalCount} tablo seçili`);
+      } else {
+        toast("Bağlantı güncellendi");
+      }
       // Eğer şifre değiştiyse otomatik şema yenile
       if (fd.get("password")) {
         try {
           const res = await api(`/api/workspaces/${wsState.current.id}/sources/${sid}/refresh`, { method: "POST" });
           const s = wsState.current.sources.find((x) => x.id === sid);
-          if (s) { s.schema = res.schema || s.schema; s.connection = { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() }; }
+          if (s) {
+            if (res.tableList) s.tables = res.tableList.map((t) => ({ name: t.name, selected: t.selected, schema: "" }));
+            s.schema = res.schema || s.schema;
+            s.connection = { ...s.connection, cachedSchema: res.schema, lastConnected: Date.now() };
+          }
           renderWsSources(wsState.current);
-          toast(`Yeni şifreyle ${res.tables} tablo şeması yüklendi`);
+          toast(`Yeni şifreyle ${res.selected}/${res.tables} tablo yüklendi`);
         } catch (err) {
           toast("Şema yenilenemedi: " + err.message, true);
         }

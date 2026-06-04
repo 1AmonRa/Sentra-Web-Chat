@@ -493,11 +493,20 @@
             <span>Kaynak adı</span>
             <input type="text" name="name" maxlength="100" required />
           </label>
-          <details class="ws-sql-section" open>
-            <summary>📋 Şema (CREATE TABLE ifadeleri)</summary>
+          <details class="ws-sql-section" id="wsEditTablesSection" hidden>
+            <summary id="wsEditTablesSummary">📑 Tablolar (0 seçili / 0 toplam)</summary>
+            <div class="ws-tables-toolbar">
+              <button type="button" class="btn ghost small" id="wsTablesAllBtn">Tümünü Seç</button>
+              <button type="button" class="btn ghost small" id="wsTablesNoneBtn">Hiçbirini Seçme</button>
+              <input type="search" id="wsTablesFilter" placeholder="Tablo ara…" autocomplete="off" />
+            </div>
+            <div class="ws-tables-list" id="wsEditTablesList"></div>
+          </details>
+          <details class="ws-sql-section">
+            <summary>📋 Şema (otomatik üretilmiş)</summary>
             <label class="field" style="margin-top:10px">
-              <span>Şema metni</span>
-              <textarea name="schema" style="min-height:140px;font-family:var(--font-mono)"></textarea>
+              <span>Şema metni (salt okunur — tabloları seçerek güncellenir)</span>
+              <textarea name="schema" readonly style="min-height:120px;font-family:var(--font-mono);opacity:0.7"></textarea>
             </label>
           </details>
           <details class="ws-sql-section">

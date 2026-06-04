@@ -2058,3 +2058,50 @@ body {
 /* Context pill workspace */
 .ctx-pill.ws { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
 .ctx-pill.ws::before { content: "📁"; }
+
+/* Tables selector (SQL edit) */
+.ws-tables-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 10px; margin-bottom: 8px;
+}
+.ws-tables-toolbar .btn { padding: 4px 10px; font-size: 11px; }
+.ws-tables-toolbar input[type="search"] {
+  flex: 1; min-width: 120px;
+  padding: 5px 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+.ws-tables-list {
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 280px; overflow-y: auto;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+}
+.ws-tables-list label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  transition: background 0.1s;
+  user-select: none;
+}
+.ws-tables-list label:hover { background: var(--accent-soft); }
+.ws-tables-list input[type="checkbox"] {
+  width: 14px; height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ws-tables-list label.ws-tbl-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn.small { padding: 4px 10px; font-size: 11.5px; }

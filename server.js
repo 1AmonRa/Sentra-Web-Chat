@@ -562,7 +562,13 @@ async function listWorkspaces(userId) {
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
     const data = await readJson(path.join(dir, f), null);
-    if (data) out.push(data);
+    if (data) {
+      // Lazy migration: SQL kaynaklarda tables yoksa schema'dan parse et
+      if (data.sources) {
+        for (const src of data.sources) ensureSqlTables(src);
+      }
+      out.push(data);
+    }
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -584,6 +590,32 @@ function sanitizeWorkspace(w) {
     createdAt: w.createdAt,
     updatedAt: w.updatedAt
   };
+}
+
+// SQL kaynağında tables yoksa ama schema varsa, CREATE TABLE ifadelerini parse edip
+// tables array'ini oluştur. Geriye uyumluluk + tablo seçim UI'ı için.
+function ensureSqlTables(src) {
+  if (src.type !== 'sql') return;
+  if (Array.isArray(src.tables) && src.tables.length > 0) return;
+  if (!src.schema || typeof src.schema !== 'string') return;
+  // CREATE TABLE başlangıçlarını bularak bloklara ayır
+  // (hem "\n\n" hem tek "\n" ile ayrılmış blokları yakalar)
+  const createRe = /CREATE\s+TABLE/gi;
+  const positions = [];
+  let m;
+  while ((m = createRe.exec(src.schema)) !== null) positions.push(m.index);
+  if (positions.length === 0) return;
+  const tables = [];
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i];
+    const end = i + 1 < positions.length ? positions[i + 1] : src.schema.length;
+    const block = src.schema.slice(start, end).trim();
+    const nameMatch = block.match(/CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+["'`[]?(\w+)["'`\]]?/i);
+    if (nameMatch) {
+      tables.push({ name: nameMatch[1], schema: block, selected: true });
+    }
+  }
+  if (tables.length > 0) src.tables = tables;
 }
 
 app.get('/api/workspaces', requireAuth, async (req, res) => {
@@ -611,6 +643,8 @@ app.post('/api/workspaces', requireAuth, async (req, res) => {
 app.get('/api/workspaces/:id', requireAuth, async (req, res) => {
   const ws = await readJson(workspaceFile(req.userId, req.params.id), null);
   if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  // Lazy migration: schema-text modundaki SQL kaynaklarda tables array'i yoksa parse et
+  if (ws.sources) for (const src of ws.sources) ensureSqlTables(src);
   res.json(sanitizeWorkspace(ws));
 });
 
@@ -777,6 +811,7 @@ app.put('/api/workspaces/:id/sources/:sid', requireAuth, async (req, res) => {
   const p = workspaceFile(req.userId, req.params.id);
   const ws = await readJson(p, null);
   if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  ensureSqlTables((ws.sources || []).find((s) => s.id === req.params.sid));
   const src = ws.sources.find((s) => s.id === req.params.sid);
   if (!src) return res.status(404).json({ error: 'Kaynak bulunamadı' });
   const { name, content, schema, sampleData, connection } = req.body || {};
@@ -856,20 +891,34 @@ app.post('/api/workspaces/:id/sources/:sid/refresh', requireAuth, async (req, re
       try {
         const [tables] = await conn.query('SHOW TABLES');
         const tableNames = tables.map((r) => Object.values(r)[0]);
-        const schemaParts = [];
-        for (const t of tableNames.slice(0, 30)) {
+        const tableEntries = [];
+        for (const t of tableNames.slice(0, 60)) {
           try {
             const [cols] = await conn.query(`DESCRIBE \`${t}\``);
             const colLines = cols.map((c) => `  ${c.Field} ${c.Type}${c.Null === 'NO' ? ' NOT NULL' : ''}${c.Key ? ` [${c.Key}]` : ''}`).join('\n');
-            schemaParts.push(`CREATE TABLE ${t} (\n${colLines}\n);`);
+            const tblSchema = `CREATE TABLE ${t} (\n${colLines}\n);`;
+            tableEntries.push({ name: t, schema: tblSchema });
           } catch (_) {}
         }
-        src.schema = schemaParts.join('\n\n');
+        // Önceki seçimleri koru (varsa)
+        const previousSelection = new Set((src.tables || []).filter((x) => x.selected).map((x) => x.name));
+        src.tables = tableEntries.map((e) => ({
+          name: e.name,
+          schema: e.schema,
+          selected: previousSelection.has(e.name) || previousSelection.size === 0 // ilk kez ise hepsi seçili
+        }));
+        // Geriye uyumluluk: src.schema = tüm seçili tabloların birleşimi
+        src.schema = src.tables.filter((t) => t.selected).map((t) => t.schema).join('\n\n');
         src.connection.cachedSchema = src.schema;
         src.connection.lastConnected = Date.now();
         ws.updatedAt = Date.now();
         await writeJson(p, ws);
-        res.json({ ok: true, tables: tableNames.length, schemaLength: src.schema.length });
+        res.json({
+          ok: true,
+          tables: tableEntries.length,
+          selected: src.tables.filter((t) => t.selected).length,
+          tableList: src.tables.map((t) => ({ name: t.name, selected: t.selected, length: t.schema.length }))
+        });
       } finally {
         await conn.end().catch(() => {});
       }
@@ -886,22 +935,34 @@ app.post('/api/workspaces/:id/sources/:sid/refresh', requireAuth, async (req, re
       });
       await client.connect();
       try {
-        const r = await client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name LIMIT 30`);
+        const r = await client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name LIMIT 60`);
         const tableNames = r.rows.map((row) => row.table_name);
-        const schemaParts = [];
+        const tableEntries = [];
         for (const t of tableNames) {
           try {
             const cr = await client.query(`SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`, [t]);
             const colLines = cr.rows.map((c) => `  ${c.column_name} ${c.data_type}${c.is_nullable === 'NO' ? ' NOT NULL' : ''}`).join('\n');
-            schemaParts.push(`CREATE TABLE ${t} (\n${colLines}\n);`);
+            const tblSchema = `CREATE TABLE ${t} (\n${colLines}\n);`;
+            tableEntries.push({ name: t, schema: tblSchema });
           } catch (_) {}
         }
-        src.schema = schemaParts.join('\n\n');
+        const previousSelection = new Set((src.tables || []).filter((x) => x.selected).map((x) => x.name));
+        src.tables = tableEntries.map((e) => ({
+          name: e.name,
+          schema: e.schema,
+          selected: previousSelection.has(e.name) || previousSelection.size === 0
+        }));
+        src.schema = src.tables.filter((t) => t.selected).map((t) => t.schema).join('\n\n');
         src.connection.cachedSchema = src.schema;
         src.connection.lastConnected = Date.now();
         ws.updatedAt = Date.now();
         await writeJson(p, ws);
-        res.json({ ok: true, tables: tableNames.length, schemaLength: src.schema.length });
+        res.json({
+          ok: true,
+          tables: tableEntries.length,
+          selected: src.tables.filter((t) => t.selected).length,
+          tableList: src.tables.map((t) => ({ name: t.name, selected: t.selected, length: t.schema.length }))
+        });
       } finally {
         await client.end().catch(() => {});
       }
@@ -911,6 +972,30 @@ app.post('/api/workspaces/:id/sources/:sid/refresh', requireAuth, async (req, re
   } catch (err) {
     res.status(500).json({ error: 'Bağlantı hatası: ' + (err.message || 'bilinmeyen') });
   }
+});
+
+// SQL tablo seçimlerini güncelle (hangi tablolar AI context'e dahil edilsin)
+app.put('/api/workspaces/:id/sources/:sid/tables', requireAuth, async (req, res) => {
+  const p = workspaceFile(req.userId, req.params.id);
+  const ws = await readJson(p, null);
+  if (!ws) return res.status(404).json({ error: 'Workspace bulunamadı' });
+  // Lazy migration
+  if (ws.sources) for (const s of ws.sources) ensureSqlTables(s);
+  const src = ws.sources.find((s) => s.id === req.params.sid);
+  if (!src) return res.status(404).json({ error: 'Kaynak bulunamadı' });
+  if (src.type !== 'sql') return res.status(400).json({ error: 'Bu kaynak SQL değil' });
+  if (!Array.isArray(src.tables) || src.tables.length === 0) {
+    return res.status(400).json({ error: 'Bu kaynak için tablo listesi yok. Önce bağlantıyı yenileyin veya CREATE TABLE ifadeleri içeren bir şema yapıştırın.' });
+  }
+  const { selected } = req.body || {};
+  if (!Array.isArray(selected)) return res.status(400).json({ error: '"selected" dizisi gerekli' });
+  const selectedSet = new Set(selected.map((s) => String(s)));
+  src.tables = src.tables.map((t) => ({ ...t, selected: selectedSet.has(t.name) }));
+  src.schema = src.tables.filter((t) => t.selected).map((t) => t.schema).join('\n\n');
+  if (src.connection) src.connection.cachedSchema = src.schema;
+  ws.updatedAt = Date.now();
+  await writeJson(p, ws);
+  res.json({ ok: true, selected: src.tables.filter((t) => t.selected).length, total: src.tables.length });
 });
 
 // ============== Chat (builds context from memory + active prompt + deep analysis) ==============
